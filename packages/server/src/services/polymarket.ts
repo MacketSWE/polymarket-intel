@@ -50,6 +50,7 @@ export interface Position {
 
 interface TradeOptions {
   limit?: number
+  offset?: number
   minSize?: number
   market?: string
 }
@@ -76,6 +77,7 @@ interface EventOptions {
 export async function getTrades(options: TradeOptions = {}): Promise<Trade[]> {
   const params = new URLSearchParams()
   if (options.limit) params.set('limit', options.limit.toString())
+  if (options.offset !== undefined) params.set('offset', options.offset.toString())
   if (options.minSize) params.set('min_size', options.minSize.toString())
   if (options.market) params.set('market', options.market)
 

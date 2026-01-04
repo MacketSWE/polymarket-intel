@@ -82,8 +82,9 @@ app.get('/api/polymarket/events', async (req, res) => {
 app.get('/api/polymarket/trades', async (req, res) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 50
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined
     const minSize = req.query.min_size ? parseInt(req.query.min_size as string) : undefined
-    const trades = await getTrades({ limit, minSize })
+    const trades = await getTrades({ limit, offset, minSize })
     res.json({ success: true, data: trades })
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message })
