@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router'
+import { computed, useSlots } from 'vue'
 
 defineProps<{
   title: string
 }>()
 
 const route = useRoute()
+const slots = useSlots()
+
+const hasSubnav = computed(() => !!slots.subnav)
 </script>
 
 <template>
@@ -14,12 +18,16 @@ const route = useRoute()
       <nav class="nav">
         <RouterLink to="/" :class="['nav-link', { active: route.path === '/' }]">Dashboard</RouterLink>
         <RouterLink to="/new" :class="['nav-link', { active: route.path === '/new' }]">New</RouterLink>
+        <RouterLink to="/top" :class="['nav-link', { active: route.path === '/top' }]">Top</RouterLink>
         <RouterLink to="/markets" :class="['nav-link', { active: route.path === '/markets' }]">Markets</RouterLink>
       </nav>
       <div class="header-slot">
         <slot name="header-actions" />
       </div>
     </header>
+    <div v-if="hasSubnav" class="subheader">
+      <slot name="subnav" />
+    </div>
     <main class="main">
       <slot />
     </main>
@@ -76,6 +84,15 @@ const route = useRoute()
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
+}
+
+.subheader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .main {

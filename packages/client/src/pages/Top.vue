@@ -34,7 +34,7 @@ const loading = ref(true)
 const rawEvents = ref<Event[]>([])
 const error = ref('')
 const selectedEvent = ref<Event | null>(null)
-const sortKey = ref<string>('createdAt')
+const sortKey = ref<string>('volume24hr')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const category = ref<Category>('start')
 const currentUtc = ref('')
@@ -45,13 +45,12 @@ function updateClock() {
   currentUtc.value = now.toISOString().slice(11, 19) + ' UTC'
 }
 
-// Client-side filtered and sorted events
+// Client-side sorted events
 const events = computed(() => {
-  const cutoff = Date.now() - 48 * 60 * 60 * 1000 // 48 hours ago
-  const filtered = rawEvents.value.filter(e => new Date(e.createdAt).getTime() > cutoff)
+  const sorted = [...rawEvents.value]
   const dir = sortDir.value === 'asc' ? 1 : -1
 
-  filtered.sort((a, b) => {
+  sorted.sort((a, b) => {
     if (sortKey.value === 'volume24hr') {
       return ((b.volume24hr || 0) - (a.volume24hr || 0)) * (sortDir.value === 'asc' ? -1 : 1)
     } else if (sortKey.value === 'createdAt') {
@@ -63,7 +62,7 @@ const events = computed(() => {
     }
     return 0
   })
-  return filtered
+  return sorted
 })
 
 function toggleSort(key: string) {
@@ -111,13 +110,12 @@ async function fetchEvents() {
   try {
     const params = new URLSearchParams()
     params.set('limit', '200')
-    params.set('order', 'createdAt')
+    params.set('order', 'volume24hr')
     params.set('ascending', 'false')
     params.set('closed', 'false')
 
     // Different filters per category
     if (category.value === 'start') {
-      // Exclude: sports (1), crypto (21), recurring (101757), hidden (102169)
       params.set('exclude_tag_ids', '1,21,101757,102169')
     } else if (category.value === 'sports') {
       params.set('tag_id', '1')
@@ -164,7 +162,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <PageLayout title="New Events">
+  <PageLayout title="Top Events">
     <template #subnav>
       <button
         v-for="cat in (['start', 'sports', 'crypto'] as Category[])"
@@ -188,15 +186,15 @@ onUnmounted(() => {
       <!-- Events Table -->
       <div class="events-container">
         <div class="table-header">
-          <span class="subtitle">{{ events.length }} events</span>
+          <span class="subtitle">{{ events.length }} events by 24h volume</span>
         </div>
         <div class="table-scroll">
           <table class="table">
             <thead>
               <tr>
                 <th class="th-static">#</th>
-                <th class="th-sortable" :class="{ sorted: sortKey === 'createdAt' }" @click="toggleSort('createdAt')">
-                  <span class="th-content">Created <span class="sort-icon">{{ sortKey === 'createdAt' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
+                <th class="th-sortable" :class="{ sorted: sortKey === 'volume24hr' }" @click="toggleSort('volume24hr')">
+                  <span class="th-content">24h Vol <span class="sort-icon">{{ sortKey === 'volume24hr' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'title' }" @click="toggleSort('title')">
                   <span class="th-content">Title <span class="sort-icon">{{ sortKey === 'title' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
@@ -204,8 +202,8 @@ onUnmounted(() => {
                 <th class="th-sortable" :class="{ sorted: sortKey === 'markets' }" @click="toggleSort('markets')">
                   <span class="th-content">Mkts <span class="sort-icon">{{ sortKey === 'markets' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
-                <th class="th-sortable" :class="{ sorted: sortKey === 'volume24hr' }" @click="toggleSort('volume24hr')">
-                  <span class="th-content">24h Vol <span class="sort-icon">{{ sortKey === 'volume24hr' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
+                <th class="th-sortable" :class="{ sorted: sortKey === 'createdAt' }" @click="toggleSort('createdAt')">
+                  <span class="th-content">Created <span class="sort-icon">{{ sortKey === 'createdAt' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
               </tr>
             </thead>
@@ -217,10 +215,10 @@ onUnmounted(() => {
                 @click="selectEvent(event)"
               >
                 <td class="row-num">{{ i + 1 }}</td>
-                <td class="date">{{ formatDate(event.createdAt) }}</td>
+                <td class="volume">{{ formatUSD(event.volume24hr || 0) }}</td>
                 <td class="title-cell">{{ event.title }}</td>
                 <td class="markets-count">{{ event.markets?.length || 0 }}</td>
-                <td class="volume">{{ formatUSD(event.volume24hr || 0) }}</td>
+                <td class="date">{{ formatDate(event.createdAt) }}</td>
               </tr>
             </tbody>
           </table>
@@ -237,8 +235,8 @@ onUnmounted(() => {
           </div>
 
           <div class="panel-meta">
-            <span class="meta-item">Created {{ formatDate(selectedEvent.createdAt) }}</span>
             <span class="meta-item">{{ formatUSD(selectedEvent.volume24hr || 0) }} 24h vol</span>
+            <span class="meta-item">Created {{ formatDate(selectedEvent.createdAt) }}</span>
           </div>
 
           <div v-if="selectedEvent.tags && selectedEvent.tags.length > 0" class="panel-tags">
@@ -438,11 +436,11 @@ onUnmounted(() => {
   width: 36px;
 }
 
-.date {
-  color: var(--text-muted);
-  font-size: var(--font-sm);
-  white-space: nowrap;
-  width: 120px;
+.volume {
+  color: var(--accent-green);
+  font-family: monospace;
+  font-weight: 600;
+  width: 100px;
 }
 
 .title-cell {
@@ -461,10 +459,11 @@ onUnmounted(() => {
   width: 50px;
 }
 
-.volume {
+.date {
   color: var(--text-muted);
-  font-family: monospace;
-  width: 90px;
+  font-size: var(--font-sm);
+  white-space: nowrap;
+  width: 120px;
 }
 
 .event-row {
