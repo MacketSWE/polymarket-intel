@@ -10,6 +10,7 @@ interface Trade {
   timestamp: number
   title: string
   slug: string
+  eventSlug: string
   outcome: string
   name: string
   pseudonym: string
@@ -350,7 +351,7 @@ onUnmounted(() => {
             <div class="detail-section">
               <span class="detail-label">Market</span>
               <p class="market-title">{{ selectedTrade.title }}</p>
-              <a :href="getMarketUrl(selectedTrade.slug)" target="_blank" class="detail-link">View on Polymarket ↗</a>
+              <a :href="getMarketUrl(selectedTrade.eventSlug)" target="_blank" class="detail-link">View on Polymarket ↗</a>
             </div>
 
             <div class="detail-section">
