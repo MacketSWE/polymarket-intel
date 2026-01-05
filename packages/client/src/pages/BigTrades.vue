@@ -19,6 +19,48 @@ interface DbTrade {
   pseudonym: string
 }
 
+interface Activity {
+  name: string
+  pseudonym: string
+  timestamp: number
+  type: string
+  title: string
+  side: string
+  size: number
+  usdcSize: number
+  price: number
+  outcome: string
+}
+
+interface Position {
+  proxyWallet: string
+  title: string
+  slug: string
+  eventSlug: string
+  outcome: string
+  size: number
+  avgPrice: number
+  curPrice: number
+  initialValue: number
+  currentValue: number
+  cashPnl: number
+  percentPnl: number
+  realizedPnl: number
+  redeemable: boolean
+}
+
+interface BotAnalysis {
+  totalTrades: number
+  totalVolume: number
+  tradesPerDay: number
+  avgTimeBetweenTrades: number
+  uniqueMarkets: number
+  mostActiveDay: { date: string; count: number }
+  tradingDays: number
+  likelyBot: boolean
+  botReasons: string[]
+}
+
 const loading = ref(true)
 const loadingMore = ref(false)
 const trades = ref<DbTrade[]>([])
@@ -28,6 +70,14 @@ const sortKey = ref<string>('timestamp')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const hasMore = ref(true)
 const PAGE_SIZE = 100
+
+// Trader analysis state
+const traderLoading = ref(false)
+const traderActivity = ref<Activity[]>([])
+const traderPositions = ref<Position[]>([])
+const traderName = ref<string | null>(null)
+const traderJoinDate = ref<Date | null>(null)
+const traderFirstSeen = ref<Date | null>(null)
 
 const sortedTrades = computed(() => {
   const sorted = [...trades.value]
@@ -50,6 +100,80 @@ const sortedTrades = computed(() => {
   return sorted
 })
 
+const botAnalysis = computed<BotAnalysis | null>(() => {
+  const trades = traderActivity.value.filter(a => a.type === 'TRADE')
+  if (trades.length < 2) return null
+
+  const dayMap = new Map<string, Activity[]>()
+  for (const trade of trades) {
+    const day = new Date(trade.timestamp * 1000).toISOString().split('T')[0]
+    if (!dayMap.has(day)) dayMap.set(day, [])
+    dayMap.get(day)!.push(trade)
+  }
+
+  let mostActiveDay = { date: '', count: 0 }
+  for (const [date, dayTrades] of dayMap) {
+    if (dayTrades.length > mostActiveDay.count) {
+      mostActiveDay = { date, count: dayTrades.length }
+    }
+  }
+
+  const sortedTrades = [...trades].sort((a, b) => a.timestamp - b.timestamp)
+  let totalTimeDiff = 0
+  for (let i = 1; i < sortedTrades.length; i++) {
+    totalTimeDiff += sortedTrades[i].timestamp - sortedTrades[i - 1].timestamp
+  }
+  const avgTimeBetweenTrades = sortedTrades.length > 1 ? totalTimeDiff / (sortedTrades.length - 1) : 0
+
+  const uniqueMarkets = new Set(trades.map(t => t.title)).size
+  const totalVolume = trades.reduce((sum, t) => sum + t.usdcSize, 0)
+
+  const firstTrade = sortedTrades[0]
+  const lastTrade = sortedTrades[sortedTrades.length - 1]
+  const daySpan = (lastTrade.timestamp - firstTrade.timestamp) / 86400
+  const tradesPerDay = daySpan > 0 ? trades.length / daySpan : trades.length
+
+  const botReasons: string[] = []
+  if (tradesPerDay > 50) botReasons.push(`High frequency: ${tradesPerDay.toFixed(1)} trades/day`)
+  if (avgTimeBetweenTrades < 60 && trades.length > 20) botReasons.push(`Rapid trades: avg ${avgTimeBetweenTrades.toFixed(0)}s between trades`)
+  if (mostActiveDay.count > 100) botReasons.push(`${mostActiveDay.count} trades on ${mostActiveDay.date}`)
+  if (totalVolume > 100000 && tradesPerDay > 20) botReasons.push(`High volume bot: $${(totalVolume / 1000).toFixed(0)}k traded`)
+
+  return {
+    totalTrades: trades.length,
+    totalVolume,
+    tradesPerDay,
+    avgTimeBetweenTrades,
+    uniqueMarkets,
+    mostActiveDay,
+    tradingDays: dayMap.size,
+    likelyBot: botReasons.length > 0,
+    botReasons
+  }
+})
+
+const positionStats = computed(() => {
+  if (traderPositions.value.length === 0) return null
+
+  const totalInvested = traderPositions.value.reduce((sum, p) => sum + p.initialValue, 0)
+  const currentValue = traderPositions.value.reduce((sum, p) => sum + p.currentValue, 0)
+  const unrealizedPnl = traderPositions.value.reduce((sum, p) => sum + p.cashPnl, 0)
+  const wins = traderPositions.value.filter(p => p.cashPnl > 0).length
+  const losses = traderPositions.value.filter(p => p.cashPnl < 0).length
+  const resolved = traderPositions.value.filter(p => p.redeemable).length
+
+  return {
+    totalPositions: traderPositions.value.length,
+    totalInvested,
+    currentValue,
+    unrealizedPnl,
+    percentPnl: totalInvested > 0 ? ((currentValue - totalInvested) / totalInvested) * 100 : 0,
+    wins,
+    losses,
+    resolved
+  }
+})
+
 function toggleSort(key: string) {
   if (sortKey.value === key) {
     sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
@@ -61,6 +185,23 @@ function toggleSort(key: string) {
 
 function formatUSD(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
+}
+
+function formatPercent(value: number): string {
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(1)}%`
+}
+
+function formatDateShort(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function dateAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
 }
 
 function formatDate(timestamp: number): string {
@@ -97,11 +238,53 @@ function shortenHash(hash: string): string {
   return hash.slice(0, 10) + '...'
 }
 
+async function fetchTraderData(address: string) {
+  traderLoading.value = true
+  traderActivity.value = []
+  traderPositions.value = []
+  traderName.value = null
+  traderJoinDate.value = null
+  traderFirstSeen.value = null
+
+  try {
+    const [activityRes, positionsRes] = await Promise.all([
+      fetch(`/api/polymarket/activity/${address}?limit=500`).then(r => r.json()),
+      fetch(`/api/polymarket/positions/${address}`).then(r => r.json())
+    ])
+
+    if (activityRes.success && activityRes.data.length > 0) {
+      traderActivity.value = activityRes.data
+      const first = activityRes.data[0]
+      traderName.value = first.name || first.pseudonym || null
+
+      if (first.name) {
+        const timestampMatch = first.name.match(/-(\d{13})$/)
+        if (timestampMatch) {
+          traderJoinDate.value = new Date(parseInt(timestampMatch[1]))
+        }
+      }
+
+      const oldestActivity = activityRes.data.reduce((oldest: Activity, a: Activity) =>
+        a.timestamp < oldest.timestamp ? a : oldest, activityRes.data[0])
+      traderFirstSeen.value = new Date(oldestActivity.timestamp * 1000)
+    }
+
+    if (positionsRes.success) {
+      traderPositions.value = positionsRes.data
+    }
+  } catch (e) {
+    console.error('Failed to fetch trader data:', e)
+  }
+
+  traderLoading.value = false
+}
+
 function selectTrade(trade: DbTrade) {
   if (selectedTrade.value?.id === trade.id) {
     selectedTrade.value = null
   } else {
     selectedTrade.value = trade
+    fetchTraderData(trade.proxy_wallet)
   }
 }
 
@@ -264,20 +447,127 @@ onMounted(() => {
 
             <div class="detail-section">
               <span class="detail-label">Trader</span>
-              <p class="trader-info">
+              <p class="trader-info-row">
                 <span v-if="selectedTrade.name || selectedTrade.pseudonym" class="trader-name">
                   {{ selectedTrade.name || selectedTrade.pseudonym }}
                 </span>
                 <code class="wallet">{{ shortenWallet(selectedTrade.proxy_wallet) }}</code>
               </p>
-              <a :href="getWalletUrl(selectedTrade.proxy_wallet)" target="_blank" class="detail-link">View Profile ↗</a>
-              <router-link
-                :to="{ path: '/trader', query: { address: selectedTrade.proxy_wallet } }"
-                class="detail-link"
-                style="margin-left: 1rem;"
-              >
-                Analyze →
-              </router-link>
+              <div class="trader-links">
+                <a :href="getWalletUrl(selectedTrade.proxy_wallet)" target="_blank" class="detail-link">Profile ↗</a>
+                <router-link
+                  :to="{ path: '/trader', query: { address: selectedTrade.proxy_wallet } }"
+                  class="detail-link"
+                >
+                  Full Analysis →
+                </router-link>
+              </div>
+            </div>
+
+            <!-- Trader Analysis -->
+            <div class="analysis-section">
+              <div v-if="traderLoading" class="analysis-loading">
+                Loading trader data...
+              </div>
+
+              <template v-else>
+                <!-- Trader Info -->
+                <div v-if="traderFirstSeen || traderActivity.length > 0" class="analysis-block">
+                  <span class="analysis-title">Trader Info</span>
+                  <div class="analysis-grid">
+                    <div v-if="traderFirstSeen" class="analysis-item">
+                      <span class="analysis-value">{{ formatDateShort(traderFirstSeen) }}</span>
+                      <span class="analysis-label">First seen</span>
+                    </div>
+                    <div v-if="traderJoinDate" class="analysis-item">
+                      <span class="analysis-value">{{ dateAgo(traderJoinDate) }}</span>
+                      <span class="analysis-label">Joined</span>
+                    </div>
+                    <div v-if="traderActivity.length > 0" class="analysis-item">
+                      <span class="analysis-value">{{ traderActivity.length }}</span>
+                      <span class="analysis-label">Activities</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Bot Analysis -->
+                <div v-if="botAnalysis" class="analysis-block" :class="{ 'is-bot': botAnalysis.likelyBot }">
+                  <div class="analysis-header">
+                    <span class="analysis-title">{{ botAnalysis.likelyBot ? 'Likely Bot' : 'Trading Stats' }}</span>
+                    <span v-if="botAnalysis.likelyBot" class="bot-badge">BOT</span>
+                  </div>
+                  <div class="analysis-grid">
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ botAnalysis.totalTrades }}</span>
+                      <span class="analysis-label">Trades</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ formatUSD(botAnalysis.totalVolume) }}</span>
+                      <span class="analysis-label">Volume</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ botAnalysis.tradesPerDay.toFixed(1) }}</span>
+                      <span class="analysis-label">Trades/day</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ botAnalysis.uniqueMarkets }}</span>
+                      <span class="analysis-label">Markets</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ botAnalysis.tradingDays }}</span>
+                      <span class="analysis-label">Active days</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ botAnalysis.mostActiveDay.count }}</span>
+                      <span class="analysis-label">Max/day</span>
+                    </div>
+                  </div>
+                  <div v-if="botAnalysis.botReasons.length > 0" class="bot-reasons">
+                    <div v-for="reason in botAnalysis.botReasons" :key="reason" class="bot-reason">
+                      {{ reason }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Position Stats -->
+                <div v-if="positionStats" class="analysis-block">
+                  <span class="analysis-title">Portfolio</span>
+                  <div class="analysis-grid">
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ positionStats.totalPositions }}</span>
+                      <span class="analysis-label">Positions</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ formatUSD(positionStats.totalInvested) }}</span>
+                      <span class="analysis-label">Invested</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ formatUSD(positionStats.currentValue) }}</span>
+                      <span class="analysis-label">Current</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value" :class="positionStats.unrealizedPnl >= 0 ? 'positive' : 'negative'">
+                        {{ formatUSD(positionStats.unrealizedPnl) }}
+                      </span>
+                      <span class="analysis-label">P&L</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value" :class="positionStats.percentPnl >= 0 ? 'positive' : 'negative'">
+                        {{ formatPercent(positionStats.percentPnl) }}
+                      </span>
+                      <span class="analysis-label">Return</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">
+                        <span class="positive">{{ positionStats.wins }}</span>
+                        <span class="sep">/</span>
+                        <span class="negative">{{ positionStats.losses }}</span>
+                      </span>
+                      <span class="analysis-label">W/L</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </div>
 
             <div class="detail-section">
@@ -605,7 +895,7 @@ onMounted(() => {
   line-height: 1.4;
 }
 
-.trader-info {
+.trader-info-row {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -616,6 +906,12 @@ onMounted(() => {
   font-size: var(--font-sm);
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+.trader-links {
+  display: flex;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xs);
 }
 
 .wallet,
@@ -647,5 +943,100 @@ onMounted(() => {
   justify-content: center;
   color: var(--text-muted);
   font-size: var(--font-sm);
+}
+
+/* Analysis Section */
+.analysis-section {
+  border-top: 1px solid var(--border-primary);
+  padding-top: var(--spacing-sm);
+}
+
+.analysis-loading {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  text-align: center;
+  padding: var(--spacing-md);
+}
+
+.analysis-block {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.analysis-block.is-bot {
+  border: 1px solid #e53935;
+  background: rgba(229, 57, 53, 0.1);
+}
+
+.analysis-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.analysis-title {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-xs);
+}
+
+.analysis-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.analysis-value {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.analysis-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.bot-badge {
+  background: #e53935;
+  color: white;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.bot-reasons {
+  margin-top: var(--spacing-xs);
+  padding-top: var(--spacing-xs);
+  border-top: 1px solid var(--border-primary);
+}
+
+.bot-reason {
+  font-size: var(--font-xs);
+  color: #e53935;
+  margin-bottom: 2px;
+}
+
+.positive {
+  color: var(--accent-green);
+}
+
+.negative {
+  color: var(--accent-red);
+}
+
+.sep {
+  color: var(--text-muted);
 }
 </style>
