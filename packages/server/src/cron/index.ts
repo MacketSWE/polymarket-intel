@@ -21,7 +21,7 @@ async function runTradesSync() {
   try {
     console.log(`[${new Date().toISOString()}] Syncing trades...`)
     const result = await syncTrades()
-    console.log(`Done: ${result.fetched} trades`)
+    console.log(`Done: ${result.fetched} fetched, ${result.uploaded} uploaded`)
   } catch (error) {
     console.error('Trades sync failed:', error)
   }
