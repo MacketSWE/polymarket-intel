@@ -31,6 +31,7 @@ import {
 } from './services/analysis.js'
 import { getAlerts, getStats } from './services/database.js'
 import { supabase } from './services/supabase.js'
+import { startCronJobs } from './cron/index.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -370,4 +371,5 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
+  startCronJobs()
 })
