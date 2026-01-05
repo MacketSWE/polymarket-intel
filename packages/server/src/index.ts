@@ -30,7 +30,7 @@ import {
   getDashboardSummary
 } from './services/analysis.js'
 import { getAlerts, getStats } from './services/database.js'
-import { supabase } from './services/supabase.js'
+import { supabase, supabaseAdmin } from './services/supabase.js'
 import { startCronJobs } from './cron/index.js'
 
 const app = express()
@@ -356,6 +356,25 @@ app.get('/api/analysis/stats', async (_req, res) => {
   try {
     const stats = getStats()
     res.json({ success: true, data: stats })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// DB trades endpoint
+app.get('/api/trades/large', requireAuth, async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+
+    const { data, error } = await supabaseAdmin
+      .from('trades')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) throw error
+    res.json({ success: true, data })
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message })
   }
