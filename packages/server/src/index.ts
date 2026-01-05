@@ -1,7 +1,12 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') })
+
 import express from 'express'
+import cookieParser from 'cookie-parser'
 import {
   getMarkets,
   getMarket,
@@ -25,19 +30,130 @@ import {
   getDashboardSummary
 } from './services/analysis.js'
 import { getAlerts, getStats } from './services/database.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') })
+import { supabase } from './services/supabase.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
 
 app.use(express.json())
+app.use(cookieParser())
+
+// Auth endpoints
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password required' })
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      return res.status(401).json({ success: false, error: error.message })
+    }
+
+    // Set HTTP-only cookies
+    res.cookie('access_token', data.session.access_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60 * 1000 // 1 hour
+    })
+    res.cookie('refresh_token', data.session.refresh_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    })
+
+    res.json({ success: true, data: { user: data.user } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+app.post('/api/auth/logout', async (_req, res) => {
+  res.clearCookie('access_token')
+  res.clearCookie('refresh_token')
+  res.json({ success: true })
+})
+
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const token = req.cookies.access_token
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' })
+    }
+
+    const { data, error } = await supabase.auth.getUser(token)
+    if (error) {
+      res.clearCookie('access_token')
+      res.clearCookie('refresh_token')
+      return res.status(401).json({ success: false, error: 'Invalid session' })
+    }
+
+    res.json({ success: true, data: { user: data.user } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refresh_token
+    if (!refreshToken) {
+      return res.status(401).json({ success: false, error: 'No refresh token' })
+    }
+
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken })
+    if (error || !data.session) {
+      res.clearCookie('access_token')
+      res.clearCookie('refresh_token')
+      return res.status(401).json({ success: false, error: 'Session expired' })
+    }
+
+    res.cookie('access_token', data.session.access_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 60 * 60 * 1000
+    })
+    res.cookie('refresh_token', data.session.refresh_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    })
+
+    res.json({ success: true, data: { user: data.user } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
 
 app.get('/api/health', (_req, res) => {
   res.json({ message: 'Server is running!', timestamp: new Date().toISOString() })
 })
+
+// Auth middleware for protected routes
+const requireAuth: express.RequestHandler = async (req, res, next) => {
+  const token = req.cookies.access_token
+  if (!token) {
+    return res.status(401).json({ success: false, error: 'Not authenticated' })
+  }
+
+  const { data, error } = await supabase.auth.getUser(token)
+  if (error || !data.user) {
+    res.clearCookie('access_token')
+    res.clearCookie('refresh_token')
+    return res.status(401).json({ success: false, error: 'Invalid session' })
+  }
+
+  next()
+}
+
+// Protect all API routes except auth and health
+app.use('/api/polymarket', requireAuth)
+app.use('/api/analysis', requireAuth)
 
 app.get('/api/polymarket/markets', async (req, res) => {
   try {

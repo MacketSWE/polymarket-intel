@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { computed, useSlots } from 'vue'
 
 defineProps<{
@@ -7,9 +7,15 @@ defineProps<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
 const slots = useSlots()
 
 const hasSubnav = computed(() => !!slots.subnav)
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' })
+  router.push('/login')
+}
 </script>
 
 <template>
@@ -25,6 +31,7 @@ const hasSubnav = computed(() => !!slots.subnav)
       </nav>
       <div class="header-slot">
         <slot name="header-actions" />
+        <button @click="logout" class="logout-btn">Logout</button>
       </div>
     </header>
     <div v-if="hasSubnav" class="subheader">
@@ -86,6 +93,21 @@ const hasSubnav = computed(() => !!slots.subnav)
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
+}
+
+.logout-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 .subheader {
