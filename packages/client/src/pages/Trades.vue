@@ -17,21 +17,39 @@ interface Trade {
   transactionHash: string
 }
 
-interface TraderStats {
-  tradeCount: number
-  totalVolume: number
-  avgSize: number
-  buyCount: number
-  sellCount: number
-  firstTrade: number | null
-  topMarkets: { title: string; count: number }[]
+interface Position {
+  title: string
+  outcome: string
+  size: number
+  avgPrice: number
+  curPrice: number
+  cashPnl: number
+  percentPnl: number
+  redeemable: boolean
+}
+
+interface TraderInfo {
+  name: string | null
+  positions: Position[]
+  // Computed stats
+  totalPositions: number
+  totalInvested: number
+  currentValue: number
+  unrealizedPnl: number
+  wins: number
+  losses: number
+  totalTrades: number
+  // Bot detection
+  tradesPerDay: number
+  likelyBot: boolean
+  botReasons: string[]
 }
 
 const loading = ref(true)
 const rawTrades = ref<Trade[]>([])
 const error = ref('')
 const selectedTrade = ref<Trade | null>(null)
-const traderStats = ref<TraderStats | null>(null)
+const traderInfo = ref<TraderInfo | null>(null)
 const loadingTrader = ref(false)
 const sortKey = ref<string>('timestamp')
 const sortDir = ref<'asc' | 'desc'>('desc')
@@ -96,48 +114,76 @@ function timeAgo(timestamp: number): string {
   return `${Math.floor(seconds / 86400)}d ago`
 }
 
-async function fetchTraderStats(wallet: string) {
+async function fetchTraderInfo(wallet: string) {
   loadingTrader.value = true
-  traderStats.value = null
+  traderInfo.value = null
 
   try {
-    const response = await fetch(`/api/polymarket/trades?maker=${wallet}&limit=500`)
-    const data = await response.json()
+    // Fetch positions and activity in parallel
+    const [positionsRes, activityRes] = await Promise.all([
+      fetch(`/api/polymarket/positions/${wallet}`).then(r => r.json()),
+      fetch(`/api/polymarket/activity/${wallet}?limit=500`).then(r => r.json())
+    ])
 
-    if (data.success && data.data.length > 0) {
-      const trades = data.data as Trade[]
+    const positions = (positionsRes.success ? positionsRes.data : []) as Position[]
+    const activity = (activityRes.success ? activityRes.data : []) as { name: string; timestamp: number; type: string }[]
 
-      // Calculate stats
-      const totalVolume = trades.reduce((sum, t) => sum + t.size, 0)
-      const buyCount = trades.filter(t => t.side === 'BUY').length
-      const sellCount = trades.filter(t => t.side === 'SELL').length
+    // Get name from activity
+    const name = activity.length > 0 ? activity[0].name : null
 
-      // Get top markets
-      const marketCounts = new Map<string, number>()
+    // Position stats
+    const totalInvested = positions.reduce((sum, p) => sum + (p.size * p.avgPrice), 0)
+    const currentValue = positions.reduce((sum, p) => sum + (p.size * p.curPrice), 0)
+    const unrealizedPnl = positions.reduce((sum, p) => sum + p.cashPnl, 0)
+    const wins = positions.filter(p => p.cashPnl > 0).length
+    const losses = positions.filter(p => p.cashPnl < 0).length
+
+    // Bot detection from activity
+    const trades = activity.filter(a => a.type === 'TRADE')
+    let tradesPerDay = 0
+    const botReasons: string[] = []
+
+    if (trades.length >= 2) {
+      const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp)
+      const daySpan = (sorted[sorted.length - 1].timestamp - sorted[0].timestamp) / 86400
+      tradesPerDay = daySpan > 0 ? trades.length / daySpan : trades.length
+
+      // Group by day for max/day
+      const dayMap = new Map<string, number>()
       for (const t of trades) {
-        marketCounts.set(t.title, (marketCounts.get(t.title) || 0) + 1)
+        const day = new Date(t.timestamp * 1000).toISOString().split('T')[0]
+        dayMap.set(day, (dayMap.get(day) || 0) + 1)
       }
-      const topMarkets = Array.from(marketCounts.entries())
-        .map(([title, count]) => ({ title, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 3)
+      const maxPerDay = Math.max(...dayMap.values())
 
-      // Find oldest trade (first trade)
-      const oldestTrade = trades.reduce((oldest, t) =>
-        t.timestamp < oldest.timestamp ? t : oldest, trades[0])
-
-      traderStats.value = {
-        tradeCount: trades.length,
-        totalVolume,
-        avgSize: totalVolume / trades.length,
-        buyCount,
-        sellCount,
-        firstTrade: oldestTrade.timestamp,
-        topMarkets
+      // Avg time between trades
+      let totalDiff = 0
+      for (let i = 1; i < sorted.length; i++) {
+        totalDiff += sorted[i].timestamp - sorted[i - 1].timestamp
       }
+      const avgTime = totalDiff / (sorted.length - 1)
+
+      if (tradesPerDay > 50) botReasons.push(`${tradesPerDay.toFixed(0)} trades/day`)
+      if (avgTime < 60 && trades.length > 20) botReasons.push(`${avgTime.toFixed(0)}s avg between trades`)
+      if (maxPerDay > 100) botReasons.push(`${maxPerDay} trades in one day`)
+    }
+
+    traderInfo.value = {
+      name,
+      positions,
+      totalPositions: positions.length,
+      totalInvested,
+      currentValue,
+      unrealizedPnl,
+      wins,
+      losses,
+      totalTrades: trades.length,
+      tradesPerDay,
+      likelyBot: botReasons.length > 0,
+      botReasons
     }
   } catch (e) {
-    console.error('Failed to fetch trader stats:', e)
+    console.error('Failed to fetch trader info:', e)
   }
 
   loadingTrader.value = false
@@ -146,10 +192,10 @@ async function fetchTraderStats(wallet: string) {
 function selectTrade(trade: Trade) {
   if (selectedTrade.value?.transactionHash === trade.transactionHash) {
     selectedTrade.value = null
-    traderStats.value = null
+    traderInfo.value = null
   } else {
     selectedTrade.value = trade
-    fetchTraderStats(trade.proxyWallet)
+    fetchTraderInfo(trade.proxyWallet)
   }
 }
 
@@ -365,41 +411,51 @@ onUnmounted(() => {
               <a :href="getWalletUrl(selectedTrade.proxyWallet)" target="_blank" class="detail-link">View Profile ↗</a>
             </div>
 
-            <!-- Trader Stats -->
+            <!-- Trader Info -->
             <div class="detail-section trader-stats">
-              <span class="detail-label">Trader Stats (last 500)</span>
+              <span class="detail-label">Trader Analysis</span>
               <div v-if="loadingTrader" class="stats-loading">Loading...</div>
-              <div v-else-if="traderStats" class="stats-grid">
-                <div class="stat-item">
-                  <span class="stat-value">{{ traderStats.tradeCount }}</span>
-                  <span class="stat-label">Trades</span>
+              <template v-else-if="traderInfo">
+                <!-- Bot Warning -->
+                <div v-if="traderInfo.likelyBot" class="bot-warning">
+                  <span class="bot-badge">BOT</span>
+                  <span class="bot-text">{{ traderInfo.botReasons.join(' · ') }}</span>
                 </div>
-                <div class="stat-item">
-                  <span class="stat-value">{{ formatUSD(traderStats.totalVolume) }}</span>
-                  <span class="stat-label">Volume</span>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                  <div class="stat-item">
+                    <span class="stat-value">{{ traderInfo.totalPositions }}</span>
+                    <span class="stat-label">Positions</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-value" :class="traderInfo.unrealizedPnl >= 0 ? 'positive' : 'negative'">
+                      {{ formatUSD(traderInfo.unrealizedPnl) }}
+                    </span>
+                    <span class="stat-label">P&L</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-value ratio">
+                      <span class="win">{{ traderInfo.wins }}</span>
+                      <span class="sep">/</span>
+                      <span class="loss">{{ traderInfo.losses }}</span>
+                    </span>
+                    <span class="stat-label">Win/Loss</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-value">{{ traderInfo.totalTrades }}</span>
+                    <span class="stat-label">Trades</span>
+                  </div>
                 </div>
-                <div class="stat-item">
-                  <span class="stat-value">{{ formatUSD(traderStats.avgSize) }}</span>
-                  <span class="stat-label">Avg Size</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-value ratio">
-                    <span class="buy">{{ traderStats.buyCount }}</span>
-                    <span class="sep">/</span>
-                    <span class="sell">{{ traderStats.sellCount }}</span>
-                  </span>
-                  <span class="stat-label">Buy/Sell</span>
-                </div>
-              </div>
-              <div v-if="traderStats && traderStats.topMarkets.length > 0" class="top-markets">
-                <span class="stat-label">Top Markets</span>
-                <ul class="market-list">
-                  <li v-for="market in traderStats.topMarkets" :key="market.title">
-                    {{ market.title.slice(0, 40) }}{{ market.title.length > 40 ? '...' : '' }}
-                    <span class="market-count">({{ market.count }})</span>
-                  </li>
-                </ul>
-              </div>
+
+                <!-- Link to full profile -->
+                <router-link
+                  :to="{ path: '/trader', query: { address: selectedTrade?.proxyWallet } }"
+                  class="detail-link full-profile"
+                >
+                  View Full Profile →
+                </router-link>
+              </template>
             </div>
 
             <div class="detail-section">
@@ -830,16 +886,24 @@ onUnmounted(() => {
   gap: 2px;
 }
 
-.stat-value .buy {
+.stat-value .win {
   color: var(--accent-green);
 }
 
-.stat-value .sell {
+.stat-value .loss {
   color: var(--accent-red);
 }
 
 .stat-value .sep {
   color: var(--text-muted);
+}
+
+.stat-value.positive {
+  color: var(--accent-green);
+}
+
+.stat-value.negative {
+  color: var(--accent-red);
 }
 
 .stat-label {
@@ -848,28 +912,39 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-.top-markets {
-  margin-top: var(--spacing-sm);
-  padding-top: var(--spacing-sm);
-  border-top: 1px solid var(--border-primary);
+/* Bot Warning */
+.bot-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: rgba(229, 57, 53, 0.15);
+  border: 1px solid #e53935;
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
 }
 
-.market-list {
-  list-style: none;
-  padding: 0;
-  margin: var(--spacing-xs) 0 0 0;
-}
-
-.market-list li {
+.bot-badge {
+  background: #e53935;
+  color: white;
   font-size: var(--font-xs);
-  color: var(--text-secondary);
-  padding: 2px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
 }
 
-.market-count {
-  color: var(--text-muted);
+.bot-text {
+  font-size: var(--font-xs);
+  color: #e53935;
+}
+
+/* Full Profile Link */
+.full-profile {
+  display: block;
+  text-align: center;
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-xs);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
 }
 </style>

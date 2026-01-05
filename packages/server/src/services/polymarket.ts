@@ -131,15 +131,15 @@ export async function getEvents(options: EventOptions = {}): Promise<unknown[]> 
   return response.json() as Promise<unknown[]>
 }
 
-export async function getUserPositions(wallet: string): Promise<Position[]> {
-  const response = await fetch(`${DATA_API}/positions?user=${wallet}`)
+export async function getUserPositions(wallet: string, limit = 500): Promise<Position[]> {
+  const response = await fetch(`${DATA_API}/positions?user=${wallet}&limit=${limit}`)
   if (!response.ok) throw new Error(`Failed to fetch positions: ${response.status}`)
 
   return response.json() as Promise<Position[]>
 }
 
-export async function getUserActivity(wallet: string): Promise<unknown[]> {
-  const response = await fetch(`${DATA_API}/activity?user=${wallet}`)
+export async function getUserActivity(wallet: string, limit = 500, offset = 0): Promise<unknown[]> {
+  const response = await fetch(`${DATA_API}/activity?user=${wallet}&limit=${limit}&offset=${offset}`)
   if (!response.ok) throw new Error(`Failed to fetch activity: ${response.status}`)
 
   return response.json() as Promise<unknown[]>

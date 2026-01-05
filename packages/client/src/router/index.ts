@@ -4,6 +4,7 @@ import Markets from '../pages/Markets.vue'
 import New from '../pages/New.vue'
 import Top from '../pages/Top.vue'
 import Trades from '../pages/Trades.vue'
+import Trader from '../pages/Trader.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -32,6 +33,11 @@ const router = createRouter({
       path: '/trades',
       name: 'trades',
       component: Trades
+    },
+    {
+      path: '/trader',
+      name: 'trader',
+      component: Trader
     }
   ]
 })

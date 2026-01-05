@@ -9,6 +9,7 @@ import {
   getTrades,
   getLargeTrades,
   getUserPositions,
+  getUserActivity,
   getTraderStats,
   getMarketStats,
   getTags,
@@ -115,6 +116,17 @@ app.get('/api/polymarket/positions/:wallet', async (req, res) => {
   try {
     const positions = await getUserPositions(req.params.wallet)
     res.json({ success: true, data: positions })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+app.get('/api/polymarket/activity/:wallet', async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 500
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+    const activity = await getUserActivity(req.params.wallet, limit, offset)
+    res.json({ success: true, data: activity })
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message })
   }

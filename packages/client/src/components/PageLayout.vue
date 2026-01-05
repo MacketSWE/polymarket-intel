@@ -20,6 +20,7 @@ const hasSubnav = computed(() => !!slots.subnav)
         <RouterLink to="/new" :class="['nav-link', { active: route.path === '/new' }]">New</RouterLink>
         <RouterLink to="/top" :class="['nav-link', { active: route.path === '/top' }]">Top</RouterLink>
         <RouterLink to="/trades" :class="['nav-link', { active: route.path === '/trades' }]">Trades</RouterLink>
+        <RouterLink to="/trader" :class="['nav-link', { active: route.path === '/trader' }]">Trader</RouterLink>
         <RouterLink to="/markets" :class="['nav-link', { active: route.path === '/markets' }]">Markets</RouterLink>
       </nav>
       <div class="header-slot">
