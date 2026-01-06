@@ -430,6 +430,17 @@ app.post('/api/trades/backfill-resolved', requireAuth, async (req, res) => {
   }
 })
 
+// Cleanup duplicate take bets (keep only first per trader/market/outcome)
+app.post('/api/trades/cleanup-duplicates', requireAuth, async (req, res) => {
+  try {
+    const { cleanupDuplicateTakes } = await import('./scripts/cleanup-duplicate-takes.js')
+    const result = await cleanupDuplicateTakes()
+    res.json({ success: true, data: result })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 // Market resolution status endpoint - proxies CLOB API
 app.get('/api/market/status/:conditionId', requireAuth, async (req, res) => {
   try {

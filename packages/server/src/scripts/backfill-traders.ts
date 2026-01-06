@@ -32,6 +32,19 @@ async function backfillTraders() {
     process.exit(0)
   }
 
+  // Fetch existing take bets to avoid duplicates per (wallet, market, outcome)
+  console.log('Fetching existing take bets...')
+  const { data: existingTakes } = await supabaseAdmin
+    .from('trades')
+    .select('proxy_wallet, condition_id, outcome')
+    .eq('take_bet', true)
+
+  const existingTakeBetKeys = new Set<string>()
+  for (const t of existingTakes || []) {
+    existingTakeBetKeys.add(`${t.proxy_wallet}:${t.condition_id}:${t.outcome}`)
+  }
+  console.log(`Found ${existingTakeBetKeys.size} existing take bets\n`)
+
   const estimatedTime = (uniqueWallets.length * (DELAY_MS + 1500)) / 1000 / 60
   console.log(`Estimated time: ${estimatedTime.toFixed(1)} minutes\n`)
 
@@ -46,17 +59,30 @@ async function backfillTraders() {
       // Fetch all trades for this wallet to calculate take_bet per trade
       const { data: walletTrades } = await supabaseAdmin
         .from('trades')
-        .select('transaction_hash, side, size, price')
+        .select('transaction_hash, condition_id, outcome, side, size, price, timestamp')
         .eq('proxy_wallet', wallet)
+        .order('timestamp', { ascending: true }) // Process oldest first
+
+      // Track take bets for this wallet within this batch
+      const walletTakeBetKeys = new Set<string>()
 
       // Update each trade with classification and take_bet
       for (const trade of walletTrades || []) {
         const amount = trade.size * trade.price
-        // take_bet = true if: follow_score >= 75, side is BUY, amount >= 3000, price <= 0.65
-        const takeBet = c.followScore >= 75 &&
+        const key = `${wallet}:${trade.condition_id}:${trade.outcome}`
+
+        // take_bet = true if: qualifies AND no existing take bet for this (wallet, market, outcome)
+        const qualifies = c.followScore >= 75 &&
           trade.side === 'BUY' &&
           amount >= 3000 &&
           trade.price <= 0.65
+
+        let takeBet = false
+        if (qualifies && !existingTakeBetKeys.has(key) && !walletTakeBetKeys.has(key)) {
+          takeBet = true
+          walletTakeBetKeys.add(key)
+          existingTakeBetKeys.add(key) // Add to global set to prevent future duplicates
+        }
 
         await supabaseAdmin
           .from('trades')

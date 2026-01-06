@@ -118,6 +118,33 @@ const marketStatusLoading = ref(false)
 const backfillLoading = ref(false)
 const backfillResult = ref<{ processed: number; won: number; lost: number; pending: number; errors: number } | null>(null)
 
+// Cleanup state
+const cleanupLoading = ref(false)
+const cleanupResult = ref<{ checked: number; duplicates: number; cleaned: number } | null>(null)
+
+const winLossStats = computed(() => {
+  const won = trades.value.filter(t => t.resolved_status === 'won')
+  const lost = trades.value.filter(t => t.resolved_status === 'lost')
+  const pending = trades.value.filter(t => t.resolved_status === null)
+
+  const totalResolved = won.length + lost.length
+  const winRate = totalResolved > 0 ? (won.length / totalResolved) * 100 : 0
+
+  // Calculate profit: won trades pay out (1/price - 1) * amount, lost trades lose amount
+  const wonProfit = won.reduce((sum, t) => sum + (t.size * (1 - t.price)), 0)
+  const lostAmount = lost.reduce((sum, t) => sum + (t.size * t.price), 0)
+  const netProfit = wonProfit - lostAmount
+
+  return {
+    won: won.length,
+    lost: lost.length,
+    pending: pending.length,
+    total: trades.value.length,
+    winRate,
+    netProfit
+  }
+})
+
 const sortedTrades = computed(() => {
   const sorted = [...trades.value]
   const dir = sortDir.value === 'asc' ? 1 : -1
@@ -350,6 +377,29 @@ async function runBackfill() {
   backfillLoading.value = false
 }
 
+async function runCleanup() {
+  cleanupLoading.value = true
+  cleanupResult.value = null
+
+  try {
+    const response = await fetch('/api/trades/cleanup-duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    const data = await response.json()
+
+    if (data.success) {
+      cleanupResult.value = data.data
+      // Refresh trades to show cleaned list
+      await fetchTrades(false)
+    }
+  } catch (e) {
+    console.error('Cleanup failed:', e)
+  }
+
+  cleanupLoading.value = false
+}
+
 onMounted(() => {
   fetchTrades()
 })
@@ -360,11 +410,17 @@ onMounted(() => {
     <template #subnav>
       <span class="info-text">High-conviction trades from good traders (follow >= 75, BUY, >= $3k, price <= 65c)</span>
       <span class="subnav-spacer"></span>
+      <div v-if="cleanupResult" class="cleanup-result">
+        <span class="result-cleaned">-{{ cleanupResult.cleaned }} dupes</span>
+      </div>
       <div v-if="backfillResult" class="backfill-result">
         <span class="result-won">{{ backfillResult.won }}W</span>
         <span class="result-lost">{{ backfillResult.lost }}L</span>
         <span class="result-pending">{{ backfillResult.pending }}P</span>
       </div>
+      <button @click="runCleanup" :disabled="cleanupLoading" class="btn btn-sm btn-cleanup">
+        {{ cleanupLoading ? 'Cleaning...' : 'Dedup' }}
+      </button>
       <button @click="runBackfill" :disabled="backfillLoading" class="btn btn-sm btn-backfill">
         {{ backfillLoading ? 'Checking...' : 'Check Resolved' }}
       </button>
@@ -381,6 +437,19 @@ onMounted(() => {
       <div class="trades-container">
         <div class="table-header">
           <span class="subtitle">{{ trades.length }} take bets</span>
+          <div class="stats-row">
+            <span class="stat-item won">{{ winLossStats.won }}W</span>
+            <span class="stat-item lost">{{ winLossStats.lost }}L</span>
+            <span class="stat-item pending">{{ winLossStats.pending }}P</span>
+            <span class="stat-divider">|</span>
+            <span class="stat-item win-rate" :class="{ good: winLossStats.winRate >= 50 }">
+              {{ winLossStats.winRate.toFixed(0) }}%
+            </span>
+            <span class="stat-divider">|</span>
+            <span class="stat-item profit" :class="{ positive: winLossStats.netProfit >= 0, negative: winLossStats.netProfit < 0 }">
+              {{ winLossStats.netProfit >= 0 ? '+' : '' }}{{ formatUSD(winLossStats.netProfit) }}
+            </span>
+          </div>
         </div>
         <div class="table-scroll">
           <table class="table">
@@ -662,6 +731,23 @@ onMounted(() => {
   background: #f57c00;
 }
 
+.btn-cleanup {
+  background: #9c27b0;
+}
+
+.btn-cleanup:hover {
+  background: #7b1fa2;
+}
+
+.cleanup-result {
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.result-cleaned {
+  color: #9c27b0;
+}
+
 .resolved-status {
   width: 60px;
   text-align: center;
@@ -758,6 +844,50 @@ onMounted(() => {
 .subtitle {
   color: var(--text-muted);
   font-size: var(--font-sm);
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.stat-item {
+  font-family: monospace;
+}
+
+.stat-item.won {
+  color: #4caf50;
+}
+
+.stat-item.lost {
+  color: #f44336;
+}
+
+.stat-item.pending {
+  color: var(--text-muted);
+}
+
+.stat-item.win-rate {
+  color: var(--text-muted);
+}
+
+.stat-item.win-rate.good {
+  color: #4caf50;
+}
+
+.stat-item.profit.positive {
+  color: #4caf50;
+}
+
+.stat-item.profit.negative {
+  color: #f44336;
+}
+
+.stat-divider {
+  color: var(--border-primary);
 }
 
 .table-scroll {

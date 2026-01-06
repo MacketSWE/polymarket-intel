@@ -50,16 +50,17 @@ interface Classification {
   classification: string
 }
 
-function mapToDbRecord(trade: RawTrade, classification?: Classification) {
+function qualifiesForTakeBet(trade: RawTrade, classification?: Classification): boolean {
   const amount = trade.size * trade.price
   const followScore = classification?.follow_score ?? 0
 
-  // take_bet = true if: follow_score >= 75, side is BUY, amount >= 3000, price <= 0.65
-  const takeBet = followScore >= 75 &&
+  return followScore >= 75 &&
     trade.side === 'BUY' &&
     amount >= 3000 &&
     trade.price <= 0.65
+}
 
+function mapToDbRecord(trade: RawTrade, classification?: Classification, takeBet?: boolean) {
   return {
     transaction_hash: trade.transactionHash,
     proxy_wallet: trade.proxyWallet,
@@ -87,7 +88,7 @@ function mapToDbRecord(trade: RawTrade, classification?: Classification) {
     bot_score: classification?.bot_score ?? null,
     whale_score: classification?.whale_score ?? null,
     classification: classification?.classification ?? null,
-    take_bet: classification ? takeBet : null
+    take_bet: takeBet ?? null
   }
 }
 
@@ -160,10 +161,43 @@ export async function syncTrades() {
     }
   }
 
-  // Map trades to DB records WITH classifications
+  // Get existing take bets to avoid duplicates per (wallet, market, outcome)
+  const potentialTakeBets = largeTrades.filter(t => {
+    const classification = classificationMap.get(t.proxyWallet)
+    return qualifiesForTakeBet(t, classification)
+  })
+
+  // Build set of existing take bet keys
+  const existingTakeBetKeys = new Set<string>()
+  if (potentialTakeBets.length > 0) {
+    const { data: existingTakes } = await supabaseAdmin
+      .from('trades')
+      .select('proxy_wallet, condition_id, outcome')
+      .eq('take_bet', true)
+
+    for (const t of existingTakes || []) {
+      existingTakeBetKeys.add(`${t.proxy_wallet}:${t.condition_id}:${t.outcome}`)
+    }
+  }
+
+  // Track new take bets in this batch to avoid duplicates within batch
+  const newTakeBetKeys = new Set<string>()
+
+  // Map trades to DB records WITH classifications, checking for existing take bets
   const records = largeTrades.map(trade => {
     const classification = classificationMap.get(trade.proxyWallet)
-    return mapToDbRecord(trade, classification)
+    const key = `${trade.proxyWallet}:${trade.conditionId}:${trade.outcome}`
+
+    let takeBet = false
+    if (classification && qualifiesForTakeBet(trade, classification)) {
+      // Only mark as take_bet if no existing take bet for this (wallet, market, outcome)
+      if (!existingTakeBetKeys.has(key) && !newTakeBetKeys.has(key)) {
+        takeBet = true
+        newTakeBetKeys.add(key)
+      }
+    }
+
+    return mapToDbRecord(trade, classification, takeBet)
   })
 
   // Upsert to DB
