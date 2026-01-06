@@ -28,4 +28,5 @@ export interface Trades {
   botScore?: number | null
   whaleScore?: number | null
   classification?: string | null
+  takeBet?: boolean | null
 }

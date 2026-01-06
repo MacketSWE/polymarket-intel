@@ -27,7 +27,8 @@ CREATE TABLE trades (
   insider_score INTEGER,
   bot_score INTEGER,
   whale_score INTEGER,
-  classification TEXT
+  classification TEXT,
+  take_bet BOOLEAN DEFAULT NULL
 );
 
 CREATE INDEX idx_trades_proxy_wallet ON trades(proxy_wallet);
