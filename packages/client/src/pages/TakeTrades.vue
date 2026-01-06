@@ -6,6 +6,7 @@ interface DbTrade {
   id: string
   transaction_hash: string
   proxy_wallet: string
+  condition_id: string
   side: 'BUY' | 'SELL'
   size: number
   price: number
@@ -19,6 +20,18 @@ interface DbTrade {
   pseudonym: string
   follow_score: number | null
   take_bet: boolean | null
+  resolved_status: 'won' | 'lost' | null
+}
+
+interface MarketStatus {
+  found: boolean
+  closed: boolean
+  active: boolean
+  acceptingOrders: boolean
+  resolved: boolean
+  winningOutcome: string | null
+  endDate: string | null
+  question: string | null
 }
 
 interface Activity {
@@ -96,6 +109,14 @@ const traderName = ref<string | null>(null)
 const traderJoinDate = ref<Date | null>(null)
 const traderFirstSeen = ref<Date | null>(null)
 const traderClassification = ref<TraderClassification | null>(null)
+
+// Market status state
+const marketStatus = ref<MarketStatus | null>(null)
+const marketStatusLoading = ref(false)
+
+// Backfill state
+const backfillLoading = ref(false)
+const backfillResult = ref<{ processed: number; won: number; lost: number; pending: number; errors: number } | null>(null)
 
 const sortedTrades = computed(() => {
   const sorted = [...trades.value]
@@ -239,12 +260,31 @@ async function fetchTraderData(address: string) {
   traderLoading.value = false
 }
 
+async function fetchMarketStatus(conditionId: string) {
+  marketStatusLoading.value = true
+  marketStatus.value = null
+
+  try {
+    const response = await fetch(`/api/market/status/${conditionId}`)
+    const data = await response.json()
+
+    if (data.success) {
+      marketStatus.value = data.data
+    }
+  } catch (e) {
+    console.error('Failed to fetch market status:', e)
+  }
+
+  marketStatusLoading.value = false
+}
+
 function selectTrade(trade: DbTrade) {
   if (selectedTrade.value?.id === trade.id) {
     selectedTrade.value = null
   } else {
     selectedTrade.value = trade
     fetchTraderData(trade.proxy_wallet)
+    fetchMarketStatus(trade.condition_id)
   }
 }
 
@@ -286,6 +326,30 @@ function loadMore() {
   }
 }
 
+async function runBackfill() {
+  backfillLoading.value = true
+  backfillResult.value = null
+
+  try {
+    const response = await fetch('/api/trades/backfill-resolved', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: 500 })
+    })
+    const data = await response.json()
+
+    if (data.success) {
+      backfillResult.value = data.data
+      // Refresh trades to show updated statuses
+      await fetchTrades(false)
+    }
+  } catch (e) {
+    console.error('Backfill failed:', e)
+  }
+
+  backfillLoading.value = false
+}
+
 onMounted(() => {
   fetchTrades()
 })
@@ -296,6 +360,14 @@ onMounted(() => {
     <template #subnav>
       <span class="info-text">High-conviction trades from good traders (follow >= 75, BUY, >= $3k, price <= 65c)</span>
       <span class="subnav-spacer"></span>
+      <div v-if="backfillResult" class="backfill-result">
+        <span class="result-won">{{ backfillResult.won }}W</span>
+        <span class="result-lost">{{ backfillResult.lost }}L</span>
+        <span class="result-pending">{{ backfillResult.pending }}P</span>
+      </div>
+      <button @click="runBackfill" :disabled="backfillLoading" class="btn btn-sm btn-backfill">
+        {{ backfillLoading ? 'Checking...' : 'Check Resolved' }}
+      </button>
       <button @click="fetchTrades(false)" :disabled="loading" class="btn btn-sm">
         {{ loading ? 'Loading...' : 'Refresh' }}
       </button>
@@ -329,6 +401,7 @@ onMounted(() => {
                 <th class="th-sortable" :class="{ sorted: sortKey === 'follow_score' }" @click="toggleSort('follow_score')">
                   <span class="th-content">Follow <span class="sort-icon">{{ sortKey === 'follow_score' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
+                <th class="th-static">Status</th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'title' }" @click="toggleSort('title')">
                   <span class="th-content">Market <span class="sort-icon">{{ sortKey === 'title' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
@@ -348,6 +421,11 @@ onMounted(() => {
                 <td class="amount">{{ formatUSD(trade.amount) }}</td>
                 <td class="follow-score">
                   <span class="follow-value high">{{ trade.follow_score }}</span>
+                </td>
+                <td class="resolved-status">
+                  <span v-if="trade.resolved_status === 'won'" class="status-chip won">WON</span>
+                  <span v-else-if="trade.resolved_status === 'lost'" class="status-chip lost">LOST</span>
+                  <span v-else class="status-chip pending">-</span>
                 </td>
                 <td class="title-cell">{{ trade.title }}</td>
                 <td class="outcome">{{ trade.outcome }}</td>
@@ -400,6 +478,29 @@ onMounted(() => {
               <span class="detail-label">Market</span>
               <p class="market-title">{{ selectedTrade.title }}</p>
               <a :href="getMarketUrl(selectedTrade.event_slug)" target="_blank" class="detail-link">View on Polymarket</a>
+
+              <!-- Market Status -->
+              <div class="market-status-section">
+                <div v-if="marketStatusLoading" class="status-loading">
+                  Checking market status...
+                </div>
+                <div v-else-if="marketStatus" class="status-result">
+                  <div v-if="marketStatus.resolved" class="status-badge resolved" :class="{ won: marketStatus.winningOutcome === selectedTrade.outcome, lost: marketStatus.winningOutcome !== selectedTrade.outcome }">
+                    <span class="status-icon">{{ marketStatus.winningOutcome === selectedTrade.outcome ? '✓' : '✗' }}</span>
+                    <span class="status-text">
+                      {{ marketStatus.winningOutcome === selectedTrade.outcome ? 'WON' : 'LOST' }}
+                    </span>
+                    <span class="winning-outcome">Winner: {{ marketStatus.winningOutcome }}</span>
+                  </div>
+                  <div v-else-if="marketStatus.closed && !marketStatus.acceptingOrders" class="status-badge pending">
+                    <span class="status-text">PENDING RESOLUTION</span>
+                  </div>
+                  <div v-else class="status-badge open">
+                    <span class="status-text">OPEN</span>
+                    <span v-if="marketStatus.acceptingOrders" class="status-detail">Accepting orders</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="detail-section">
@@ -532,6 +633,61 @@ onMounted(() => {
 .info-text {
   color: var(--text-muted);
   font-size: var(--font-sm);
+}
+
+.backfill-result {
+  display: flex;
+  gap: var(--spacing-sm);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.result-won {
+  color: #4caf50;
+}
+
+.result-lost {
+  color: #f44336;
+}
+
+.result-pending {
+  color: #ffc107;
+}
+
+.btn-backfill {
+  background: #ff9800;
+}
+
+.btn-backfill:hover {
+  background: #f57c00;
+}
+
+.resolved-status {
+  width: 60px;
+  text-align: center;
+}
+
+.status-chip {
+  display: inline-block;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.status-chip.won {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+.status-chip.lost {
+  background: rgba(244, 67, 54, 0.2);
+  color: #f44336;
+}
+
+.status-chip.pending {
+  color: var(--text-muted);
+  opacity: 0.5;
 }
 
 .subnav-spacer {
@@ -836,6 +992,72 @@ onMounted(() => {
   color: var(--text-secondary);
   margin: var(--spacing-xs) 0;
   line-height: 1.4;
+}
+
+.market-status-section {
+  margin-top: var(--spacing-sm);
+}
+
+.status-loading {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.status-badge.resolved.won {
+  background: rgba(76, 175, 80, 0.2);
+  border: 1px solid #4caf50;
+  color: #4caf50;
+}
+
+.status-badge.resolved.lost {
+  background: rgba(244, 67, 54, 0.2);
+  border: 1px solid #f44336;
+  color: #f44336;
+}
+
+.status-badge.pending {
+  background: rgba(255, 193, 7, 0.2);
+  border: 1px solid #ffc107;
+  color: #ffc107;
+}
+
+.status-badge.open {
+  background: rgba(33, 150, 243, 0.2);
+  border: 1px solid #2196f3;
+  color: #2196f3;
+}
+
+.status-icon {
+  font-size: var(--font-base);
+  font-weight: 700;
+}
+
+.status-text {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.winning-outcome {
+  font-size: var(--font-xs);
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.status-detail {
+  font-size: var(--font-xs);
+  font-weight: 400;
+  opacity: 0.8;
 }
 
 .trader-info-row {

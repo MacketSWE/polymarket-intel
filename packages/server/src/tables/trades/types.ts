@@ -29,4 +29,6 @@ export interface Trades {
   whaleScore?: number | null
   classification?: string | null
   takeBet?: boolean | null
+  // Resolution status
+  resolvedStatus?: 'won' | 'lost' | null
 }

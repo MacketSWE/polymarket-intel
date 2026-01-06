@@ -418,6 +418,61 @@ app.get('/api/trades/take', requireAuth, async (req, res) => {
   }
 })
 
+// Backfill resolved status for take bets
+app.post('/api/trades/backfill-resolved', requireAuth, async (req, res) => {
+  try {
+    const limit = req.body.limit || 100
+    const { backfillResolved } = await import('./scripts/backfill-resolved.js')
+    const result = await backfillResolved(limit)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Market resolution status endpoint - proxies CLOB API
+app.get('/api/market/status/:conditionId', requireAuth, async (req, res) => {
+  try {
+    const { conditionId } = req.params
+    const response = await fetch(`https://clob.polymarket.com/markets/${conditionId}`)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return res.json({ success: true, data: { found: false } })
+      }
+      throw new Error(`CLOB API error: ${response.status}`)
+    }
+
+    const market = await response.json() as {
+      closed: boolean
+      active: boolean
+      accepting_orders: boolean
+      end_date_iso: string
+      question: string
+      tokens: Array<{ winner: boolean; outcome: string }>
+    }
+
+    // Extract resolution info
+    const winningToken = market.tokens?.find(t => t.winner === true)
+
+    res.json({
+      success: true,
+      data: {
+        found: true,
+        closed: market.closed,
+        active: market.active,
+        acceptingOrders: market.accepting_orders,
+        resolved: winningToken !== undefined,
+        winningOutcome: winningToken?.outcome || null,
+        endDate: market.end_date_iso,
+        question: market.question
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.resolve(__dirname, '../../client/dist')
   app.use(express.static(clientDist))
