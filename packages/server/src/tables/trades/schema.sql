@@ -20,13 +20,22 @@ CREATE TABLE trades (
   bio TEXT,
   profile_image TEXT,
   profile_image_optimized TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Classification columns
+  good_trader BOOLEAN DEFAULT NULL,
+  follow_score INTEGER,
+  insider_score INTEGER,
+  bot_score INTEGER,
+  whale_score INTEGER,
+  classification TEXT
 );
 
 CREATE INDEX idx_trades_proxy_wallet ON trades(proxy_wallet);
 CREATE INDEX idx_trades_timestamp ON trades(timestamp DESC);
 CREATE INDEX idx_trades_event_slug ON trades(event_slug);
 CREATE INDEX idx_trades_side ON trades(side);
+CREATE INDEX idx_trades_good_trader ON trades(good_trader) WHERE good_trader = true;
+CREATE INDEX idx_trades_follow_score ON trades(follow_score DESC);
 
 -- Enable Row Level Security
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;

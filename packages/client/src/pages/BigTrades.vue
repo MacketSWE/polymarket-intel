@@ -49,16 +49,31 @@ interface Position {
   redeemable: boolean
 }
 
-interface BotAnalysis {
-  totalTrades: number
+interface TraderClassification {
+  type: 'insider' | 'bot' | 'whale' | 'normal'
+  confidence: number
+  insiderScore: number
+  botScore: number
+  whaleScore: number
+  followScore: number
+  followWorthy: boolean
+  reasons: string[]
+  followReasons: string[]
+  profile: {
+    createdAt: string | null
+    xUsername: string | null
+    verifiedBadge: boolean | null
+  } | null
+  leaderboardRank: number | null
   totalVolume: number
+  totalPnl: number
+  realizedPnl: number
+  unrealizedPnl: number
+  accountAgeDays: number | null
+  marketsTraded: number
+  winRate: number | null
+  avgTradeSize: number
   tradesPerDay: number
-  avgTimeBetweenTrades: number
-  uniqueMarkets: number
-  mostActiveDay: { date: string; count: number }
-  tradingDays: number
-  likelyBot: boolean
-  botReasons: string[]
 }
 
 const loading = ref(true)
@@ -69,7 +84,7 @@ const selectedTrade = ref<DbTrade | null>(null)
 const sortKey = ref<string>('timestamp')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const hasMore = ref(true)
-const PAGE_SIZE = 100
+const PAGE_SIZE = 500
 
 // Trader analysis state
 const traderLoading = ref(false)
@@ -78,6 +93,7 @@ const traderPositions = ref<Position[]>([])
 const traderName = ref<string | null>(null)
 const traderJoinDate = ref<Date | null>(null)
 const traderFirstSeen = ref<Date | null>(null)
+const traderClassification = ref<TraderClassification | null>(null)
 
 const sortedTrades = computed(() => {
   const sorted = [...trades.value]
@@ -100,57 +116,6 @@ const sortedTrades = computed(() => {
   return sorted
 })
 
-const botAnalysis = computed<BotAnalysis | null>(() => {
-  const trades = traderActivity.value.filter(a => a.type === 'TRADE')
-  if (trades.length < 2) return null
-
-  const dayMap = new Map<string, Activity[]>()
-  for (const trade of trades) {
-    const day = new Date(trade.timestamp * 1000).toISOString().split('T')[0]
-    if (!dayMap.has(day)) dayMap.set(day, [])
-    dayMap.get(day)!.push(trade)
-  }
-
-  let mostActiveDay = { date: '', count: 0 }
-  for (const [date, dayTrades] of dayMap) {
-    if (dayTrades.length > mostActiveDay.count) {
-      mostActiveDay = { date, count: dayTrades.length }
-    }
-  }
-
-  const sortedTrades = [...trades].sort((a, b) => a.timestamp - b.timestamp)
-  let totalTimeDiff = 0
-  for (let i = 1; i < sortedTrades.length; i++) {
-    totalTimeDiff += sortedTrades[i].timestamp - sortedTrades[i - 1].timestamp
-  }
-  const avgTimeBetweenTrades = sortedTrades.length > 1 ? totalTimeDiff / (sortedTrades.length - 1) : 0
-
-  const uniqueMarkets = new Set(trades.map(t => t.title)).size
-  const totalVolume = trades.reduce((sum, t) => sum + t.usdcSize, 0)
-
-  const firstTrade = sortedTrades[0]
-  const lastTrade = sortedTrades[sortedTrades.length - 1]
-  const daySpan = (lastTrade.timestamp - firstTrade.timestamp) / 86400
-  const tradesPerDay = daySpan > 0 ? trades.length / daySpan : trades.length
-
-  const botReasons: string[] = []
-  if (tradesPerDay > 50) botReasons.push(`High frequency: ${tradesPerDay.toFixed(1)} trades/day`)
-  if (avgTimeBetweenTrades < 60 && trades.length > 20) botReasons.push(`Rapid trades: avg ${avgTimeBetweenTrades.toFixed(0)}s between trades`)
-  if (mostActiveDay.count > 100) botReasons.push(`${mostActiveDay.count} trades on ${mostActiveDay.date}`)
-  if (totalVolume > 100000 && tradesPerDay > 20) botReasons.push(`High volume bot: $${(totalVolume / 1000).toFixed(0)}k traded`)
-
-  return {
-    totalTrades: trades.length,
-    totalVolume,
-    tradesPerDay,
-    avgTimeBetweenTrades,
-    uniqueMarkets,
-    mostActiveDay,
-    tradingDays: dayMap.size,
-    likelyBot: botReasons.length > 0,
-    botReasons
-  }
-})
 
 const positionStats = computed(() => {
   if (traderPositions.value.length === 0) return null
@@ -185,23 +150,6 @@ function toggleSort(key: string) {
 
 function formatUSD(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
-}
-
-function formatPercent(value: number): string {
-  const sign = value >= 0 ? '+' : ''
-  return `${sign}${value.toFixed(1)}%`
-}
-
-function formatDateShort(date: Date): string {
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function dateAgo(date: Date): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
-  if (seconds < 60) return `${seconds}s ago`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
-  return `${Math.floor(seconds / 86400)}d ago`
 }
 
 function formatDate(timestamp: number): string {
@@ -245,11 +193,13 @@ async function fetchTraderData(address: string) {
   traderName.value = null
   traderJoinDate.value = null
   traderFirstSeen.value = null
+  traderClassification.value = null
 
   try {
-    const [activityRes, positionsRes] = await Promise.all([
+    const [activityRes, positionsRes, classifyRes] = await Promise.all([
       fetch(`/api/polymarket/activity/${address}?limit=500`).then(r => r.json()),
-      fetch(`/api/polymarket/positions/${address}`).then(r => r.json())
+      fetch(`/api/polymarket/positions/${address}`).then(r => r.json()),
+      fetch(`/api/polymarket/classify/${address}`).then(r => r.json())
     ])
 
     if (activityRes.success && activityRes.data.length > 0) {
@@ -271,6 +221,10 @@ async function fetchTraderData(address: string) {
 
     if (positionsRes.success) {
       traderPositions.value = positionsRes.data
+    }
+
+    if (classifyRes.success) {
+      traderClassification.value = classifyRes.data
     }
   } catch (e) {
     console.error('Failed to fetch trader data:', e)
@@ -453,6 +407,15 @@ onMounted(() => {
                 </span>
                 <code class="wallet">{{ shortenWallet(selectedTrade.proxy_wallet) }}</code>
               </p>
+
+              <!-- Classification Badge -->
+              <div v-if="traderClassification" class="classification-banner" :class="traderClassification.type">
+                <span class="classification-badge" :class="traderClassification.type">
+                  {{ traderClassification.type === 'normal' ? 'NORMAL USER' : traderClassification.type.toUpperCase() }}
+                </span>
+                <span v-if="traderClassification.type !== 'normal'" class="classification-confidence">{{ traderClassification.confidence }}% confidence</span>
+              </div>
+
               <div class="trader-links">
                 <a :href="getWalletUrl(selectedTrade.proxy_wallet)" target="_blank" class="detail-link">Profile ↗</a>
                 <router-link
@@ -471,67 +434,115 @@ onMounted(() => {
               </div>
 
               <template v-else>
-                <!-- Trader Info -->
-                <div v-if="traderFirstSeen || traderActivity.length > 0" class="analysis-block">
-                  <span class="analysis-title">Trader Info</span>
-                  <div class="analysis-grid">
-                    <div v-if="traderFirstSeen" class="analysis-item">
-                      <span class="analysis-value">{{ formatDateShort(traderFirstSeen) }}</span>
-                      <span class="analysis-label">First seen</span>
+                <!-- Follow Score -->
+                <div v-if="traderClassification" class="analysis-block follow-block" :class="{ 'follow-worthy': traderClassification.followWorthy }">
+                  <div class="follow-header">
+                    <span class="analysis-title">Worth Following?</span>
+                    <span class="follow-badge" :class="traderClassification.followWorthy ? 'yes' : 'no'">
+                      {{ traderClassification.followWorthy ? 'YES' : 'NO' }}
+                    </span>
+                  </div>
+                  <div class="score-row follow-score-row">
+                    <span class="score-label">Score</span>
+                    <div class="score-bar-container">
+                      <div class="score-bar follow" :style="{ width: traderClassification.followScore + '%' }"></div>
                     </div>
-                    <div v-if="traderJoinDate" class="analysis-item">
-                      <span class="analysis-value">{{ dateAgo(traderJoinDate) }}</span>
-                      <span class="analysis-label">Joined</span>
-                    </div>
-                    <div v-if="traderActivity.length > 0" class="analysis-item">
-                      <span class="analysis-value">{{ traderActivity.length }}</span>
-                      <span class="analysis-label">Activities</span>
+                    <span class="score-value">{{ traderClassification.followScore }}</span>
+                  </div>
+                  <div v-if="traderClassification.followReasons.length > 0" class="classification-reasons">
+                    <div v-for="reason in traderClassification.followReasons" :key="reason" class="reason-item">
+                      {{ reason }}
                     </div>
                   </div>
                 </div>
 
-                <!-- Bot Analysis -->
-                <div v-if="botAnalysis" class="analysis-block" :class="{ 'is-bot': botAnalysis.likelyBot }">
-                  <div class="analysis-header">
-                    <span class="analysis-title">{{ botAnalysis.likelyBot ? 'Likely Bot' : 'Trading Stats' }}</span>
-                    <span v-if="botAnalysis.likelyBot" class="bot-badge">BOT</span>
+                <!-- Classification Scores -->
+                <div v-if="traderClassification" class="analysis-block classification-block">
+                  <span class="analysis-title">Classification Scores</span>
+                  <div class="score-bars">
+                    <div class="score-row">
+                      <span class="score-label">Insider</span>
+                      <div class="score-bar-container">
+                        <div class="score-bar insider" :style="{ width: traderClassification.insiderScore + '%' }"></div>
+                      </div>
+                      <span class="score-value">{{ traderClassification.insiderScore }}</span>
+                    </div>
+                    <div class="score-row">
+                      <span class="score-label">Bot</span>
+                      <div class="score-bar-container">
+                        <div class="score-bar bot" :style="{ width: traderClassification.botScore + '%' }"></div>
+                      </div>
+                      <span class="score-value">{{ traderClassification.botScore }}</span>
+                    </div>
+                    <div class="score-row">
+                      <span class="score-label">Whale</span>
+                      <div class="score-bar-container">
+                        <div class="score-bar whale" :style="{ width: traderClassification.whaleScore + '%' }"></div>
+                      </div>
+                      <span class="score-value">{{ traderClassification.whaleScore }}</span>
+                    </div>
                   </div>
+                  <div v-if="traderClassification.reasons.length > 0" class="classification-reasons">
+                    <div v-for="reason in traderClassification.reasons" :key="reason" class="reason-item">
+                      {{ reason }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Trader Stats from Classification -->
+                <div v-if="traderClassification" class="analysis-block">
+                  <span class="analysis-title">Trader Stats</span>
                   <div class="analysis-grid">
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ botAnalysis.totalTrades }}</span>
-                      <span class="analysis-label">Trades</span>
-                    </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value">{{ formatUSD(botAnalysis.totalVolume) }}</span>
+                      <span class="analysis-value">{{ formatUSD(traderClassification.totalVolume) }}</span>
                       <span class="analysis-label">Volume</span>
                     </div>
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ botAnalysis.tradesPerDay.toFixed(1) }}</span>
-                      <span class="analysis-label">Trades/day</span>
+                      <span class="analysis-value" :class="traderClassification.realizedPnl >= 0 ? 'positive' : 'negative'">
+                        {{ formatUSD(traderClassification.realizedPnl) }}
+                      </span>
+                      <span class="analysis-label">Realized</span>
                     </div>
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ botAnalysis.uniqueMarkets }}</span>
+                      <span class="analysis-value" :class="traderClassification.unrealizedPnl >= 0 ? 'positive' : 'negative'">
+                        {{ formatUSD(traderClassification.unrealizedPnl) }}
+                      </span>
+                      <span class="analysis-label">Unrealized</span>
+                    </div>
+                    <div class="analysis-item">
+                      <span class="analysis-value">{{ traderClassification.marketsTraded }}</span>
                       <span class="analysis-label">Markets</span>
                     </div>
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ botAnalysis.tradingDays }}</span>
-                      <span class="analysis-label">Active days</span>
+                      <span class="analysis-value">{{ formatUSD(traderClassification.avgTradeSize) }}</span>
+                      <span class="analysis-label">Avg Trade</span>
                     </div>
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ botAnalysis.mostActiveDay.count }}</span>
-                      <span class="analysis-label">Max/day</span>
+                      <span class="analysis-value">{{ traderClassification.tradesPerDay.toFixed(1) }}</span>
+                      <span class="analysis-label">Trades/day</span>
                     </div>
-                  </div>
-                  <div v-if="botAnalysis.botReasons.length > 0" class="bot-reasons">
-                    <div v-for="reason in botAnalysis.botReasons" :key="reason" class="bot-reason">
-                      {{ reason }}
+                    <div v-if="traderClassification.winRate !== null" class="analysis-item">
+                      <span class="analysis-value">{{ traderClassification.winRate.toFixed(0) }}%</span>
+                      <span class="analysis-label">Resolved W/R</span>
+                    </div>
+                    <div v-if="traderClassification.accountAgeDays !== null" class="analysis-item">
+                      <span class="analysis-value">{{ traderClassification.accountAgeDays }}d</span>
+                      <span class="analysis-label">Account Age</span>
+                    </div>
+                    <div v-if="traderClassification.leaderboardRank" class="analysis-item">
+                      <span class="analysis-value">#{{ traderClassification.leaderboardRank }}</span>
+                      <span class="analysis-label">Rank</span>
+                    </div>
+                    <div v-if="traderClassification.profile?.verifiedBadge" class="analysis-item">
+                      <span class="analysis-value verified">Verified</span>
+                      <span class="analysis-label">Status</span>
                     </div>
                   </div>
                 </div>
 
                 <!-- Position Stats -->
                 <div v-if="positionStats" class="analysis-block">
-                  <span class="analysis-title">Portfolio</span>
+                  <span class="analysis-title">Current Positions</span>
                   <div class="analysis-grid">
                     <div class="analysis-item">
                       <span class="analysis-value">{{ positionStats.totalPositions }}</span>
@@ -549,21 +560,7 @@ onMounted(() => {
                       <span class="analysis-value" :class="positionStats.unrealizedPnl >= 0 ? 'positive' : 'negative'">
                         {{ formatUSD(positionStats.unrealizedPnl) }}
                       </span>
-                      <span class="analysis-label">P&L</span>
-                    </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value" :class="positionStats.percentPnl >= 0 ? 'positive' : 'negative'">
-                        {{ formatPercent(positionStats.percentPnl) }}
-                      </span>
-                      <span class="analysis-label">Return</span>
-                    </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value">
-                        <span class="positive">{{ positionStats.wins }}</span>
-                        <span class="sep">/</span>
-                        <span class="negative">{{ positionStats.losses }}</span>
-                      </span>
-                      <span class="analysis-label">W/L</span>
+                      <span class="analysis-label">Unrealized</span>
                     </div>
                   </div>
                 </div>
@@ -1038,5 +1035,184 @@ onMounted(() => {
 
 .sep {
   color: var(--text-muted);
+}
+
+/* Classification Styles */
+.classification-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  margin: var(--spacing-sm) 0;
+}
+
+.classification-banner.insider {
+  background: rgba(255, 152, 0, 0.15);
+  border: 1px solid #ff9800;
+}
+
+.classification-banner.bot {
+  background: rgba(229, 57, 53, 0.15);
+  border: 1px solid #e53935;
+}
+
+.classification-banner.whale {
+  background: rgba(33, 150, 243, 0.15);
+  border: 1px solid #2196f3;
+}
+
+.classification-banner.normal {
+  background: rgba(158, 158, 158, 0.15);
+  border: 1px solid #9e9e9e;
+}
+
+.classification-badge {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: white;
+}
+
+.classification-badge.insider {
+  background: #ff9800;
+}
+
+.classification-badge.bot {
+  background: #e53935;
+}
+
+.classification-badge.whale {
+  background: #2196f3;
+}
+
+.classification-badge.normal {
+  background: #9e9e9e;
+}
+
+.classification-confidence {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.classification-block {
+  border: 1px solid var(--border-primary);
+}
+
+.score-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--spacing-xs);
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.score-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  width: 50px;
+  flex-shrink: 0;
+}
+
+.score-bar-container {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.score-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.score-bar.insider {
+  background: linear-gradient(90deg, #ff9800, #ffc107);
+}
+
+.score-bar.bot {
+  background: linear-gradient(90deg, #e53935, #f44336);
+}
+
+.score-bar.whale {
+  background: linear-gradient(90deg, #2196f3, #03a9f4);
+}
+
+.score-value {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  width: 24px;
+  text-align: right;
+}
+
+.classification-reasons {
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-primary);
+}
+
+.reason-item {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+
+.reason-item::before {
+  content: '• ';
+  color: var(--text-muted);
+}
+
+.verified {
+  color: #2196f3;
+}
+
+/* Follow Score Styles */
+.follow-block {
+  border: 1px solid var(--border-primary);
+}
+
+.follow-block.follow-worthy {
+  border-color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.follow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xs);
+}
+
+.follow-badge {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  color: white;
+}
+
+.follow-badge.yes {
+  background: #4caf50;
+}
+
+.follow-badge.no {
+  background: #757575;
+}
+
+.follow-score-row {
+  margin-bottom: var(--spacing-xs);
+}
+
+.score-bar.follow {
+  background: linear-gradient(90deg, #4caf50, #8bc34a);
 }
 </style>

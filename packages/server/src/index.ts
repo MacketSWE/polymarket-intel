@@ -19,7 +19,8 @@ import {
   getMarketStats,
   getTags,
   getSports,
-  getPopularTags
+  getPopularTags,
+  classifyTrader
 } from './services/polymarket.js'
 import {
   syncTrades,
@@ -229,6 +230,15 @@ app.get('/api/polymarket/trader/:wallet', async (req, res) => {
   }
 })
 
+app.get('/api/polymarket/classify/:wallet', async (req, res) => {
+  try {
+    const classification = await classifyTrader(req.params.wallet)
+    res.json({ success: true, data: classification })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 app.get('/api/polymarket/positions/:wallet', async (req, res) => {
   try {
     const positions = await getUserPositions(req.params.wallet)
@@ -366,10 +376,18 @@ app.get('/api/trades/large', requireAuth, async (req, res) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 100
     const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+    const maxPrice = req.query.max_price ? parseFloat(req.query.max_price as string) : 0.9
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('trades')
       .select('*')
+
+    // Filter out high probability trades by default (price > 90 cents)
+    if (maxPrice < 1) {
+      query = query.lte('price', maxPrice)
+    }
+
+    const { data, error } = await query
       .order('timestamp', { ascending: false })
       .range(offset, offset + limit - 1)
 

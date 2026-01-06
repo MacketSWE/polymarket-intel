@@ -21,4 +21,11 @@ export interface Trades {
   profileImage: string
   profileImageOptimized: string
   createdAt?: string
+  // Classification columns
+  goodTrader?: boolean | null
+  followScore?: number | null
+  insiderScore?: number | null
+  botScore?: number | null
+  whaleScore?: number | null
+  classification?: string | null
 }
