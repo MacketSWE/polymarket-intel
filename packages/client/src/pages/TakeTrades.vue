@@ -86,7 +86,7 @@ const selectedTrade = ref<DbTrade | null>(null)
 const sortKey = ref<string>('timestamp')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const hasMore = ref(true)
-const PAGE_SIZE = 500
+const PAGE_SIZE = 1000
 
 // Trader analysis state
 const traderLoading = ref(false)
@@ -258,7 +258,7 @@ async function fetchTrades(append = false) {
 
   try {
     const offset = append ? trades.value.length : 0
-    const response = await fetch(`/api/trades/large?limit=${PAGE_SIZE}&offset=${offset}`)
+    const response = await fetch(`/api/trades/take?limit=${PAGE_SIZE}&offset=${offset}`)
     const data = await response.json()
 
     if (data.success) {
@@ -292,24 +292,23 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageLayout title="Trades">
+  <PageLayout title="Take Bets">
     <template #subnav>
-      <span class="big-badge">BIG</span>
-      <span class="info-text">Trades >= $2,500 from our database</span>
+      <span class="info-text">High-conviction trades from good traders (follow >= 75, BUY, >= $3k, price <= 65c)</span>
       <span class="subnav-spacer"></span>
       <button @click="fetchTrades(false)" :disabled="loading" class="btn btn-sm">
         {{ loading ? 'Loading...' : 'Refresh' }}
       </button>
     </template>
 
-    <div v-if="loading && trades.length === 0" class="loading">Loading trades...</div>
+    <div v-if="loading && trades.length === 0" class="loading">Loading take bets...</div>
     <div v-else-if="error" class="error">{{ error }}</div>
 
     <div v-else class="content-layout">
       <!-- Trades Table -->
       <div class="trades-container">
         <div class="table-header">
-          <span class="subtitle">{{ trades.length }} large trades</span>
+          <span class="subtitle">{{ trades.length }} take bets</span>
         </div>
         <div class="table-scroll">
           <table class="table">
@@ -318,7 +317,6 @@ onMounted(() => {
                 <th class="th-sortable" :class="{ sorted: sortKey === 'timestamp' }" @click="toggleSort('timestamp')">
                   <span class="th-content">Time <span class="sort-icon">{{ sortKey === 'timestamp' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
-                <th class="th-static">Side</th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'size' }" @click="toggleSort('size')">
                   <span class="th-content">Size <span class="sort-icon">{{ sortKey === 'size' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
@@ -331,7 +329,6 @@ onMounted(() => {
                 <th class="th-sortable" :class="{ sorted: sortKey === 'follow_score' }" @click="toggleSort('follow_score')">
                   <span class="th-content">Follow <span class="sort-icon">{{ sortKey === 'follow_score' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
-                <th class="th-static">Take</th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'title' }" @click="toggleSort('title')">
                   <span class="th-content">Market <span class="sort-icon">{{ sortKey === 'title' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
@@ -342,24 +339,15 @@ onMounted(() => {
               <tr
                 v-for="trade in sortedTrades"
                 :key="trade.id"
-                :class="['trade-row', { selected: selectedTrade?.id === trade.id, 'take-bet': trade.take_bet }]"
+                :class="['trade-row', { selected: selectedTrade?.id === trade.id }]"
                 @click="selectTrade(trade)"
               >
                 <td class="time">{{ timeAgo(trade.timestamp) }}</td>
-                <td>
-                  <span :class="['side', trade.side.toLowerCase()]">{{ trade.side }}</span>
-                </td>
                 <td class="size">{{ formatUSD(trade.size) }}</td>
-                <td class="price">{{ (trade.price * 100).toFixed(1) }}¢</td>
+                <td class="price">{{ (trade.price * 100).toFixed(1) }}c</td>
                 <td class="amount">{{ formatUSD(trade.amount) }}</td>
                 <td class="follow-score">
-                  <span v-if="trade.follow_score !== null" :class="['follow-value', { high: trade.follow_score >= 75, medium: trade.follow_score >= 50 && trade.follow_score < 75 }]">
-                    {{ trade.follow_score }}
-                  </span>
-                  <span v-else class="no-data">-</span>
-                </td>
-                <td class="take-cell">
-                  <span v-if="trade.take_bet" class="take-badge">TAKE</span>
+                  <span class="follow-value high">{{ trade.follow_score }}</span>
                 </td>
                 <td class="title-cell">{{ trade.title }}</td>
                 <td class="outcome">{{ trade.outcome }}</td>
@@ -379,7 +367,7 @@ onMounted(() => {
         <template v-if="selectedTrade">
           <div class="panel-header">
             <h3 class="panel-title">Trade Details</h3>
-            <button class="close-btn" @click="selectedTrade = null">×</button>
+            <button class="close-btn" @click="selectedTrade = null">x</button>
           </div>
 
           <div class="panel-content">
@@ -389,18 +377,13 @@ onMounted(() => {
             </div>
 
             <div class="detail-row">
-              <span class="detail-label">Side</span>
-              <span :class="['side', selectedTrade.side.toLowerCase()]">{{ selectedTrade.side }}</span>
-            </div>
-
-            <div class="detail-row">
               <span class="detail-label">Size</span>
               <span class="detail-value size-large">{{ formatUSD(selectedTrade.size) }}</span>
             </div>
 
             <div class="detail-row">
               <span class="detail-label">Price</span>
-              <span class="detail-value">{{ (selectedTrade.price * 100).toFixed(2) }}¢</span>
+              <span class="detail-value">{{ (selectedTrade.price * 100).toFixed(2) }}c</span>
             </div>
 
             <div class="detail-row">
@@ -416,7 +399,7 @@ onMounted(() => {
             <div class="detail-section">
               <span class="detail-label">Market</span>
               <p class="market-title">{{ selectedTrade.title }}</p>
-              <a :href="getMarketUrl(selectedTrade.event_slug)" target="_blank" class="detail-link">View on Polymarket ↗</a>
+              <a :href="getMarketUrl(selectedTrade.event_slug)" target="_blank" class="detail-link">View on Polymarket</a>
             </div>
 
             <div class="detail-section">
@@ -437,12 +420,12 @@ onMounted(() => {
               </div>
 
               <div class="trader-links">
-                <a :href="getWalletUrl(selectedTrade.proxy_wallet)" target="_blank" class="detail-link">Profile ↗</a>
+                <a :href="getWalletUrl(selectedTrade.proxy_wallet)" target="_blank" class="detail-link">Profile</a>
                 <router-link
                   :to="{ path: '/trader', query: { address: selectedTrade.proxy_wallet } }"
                   class="detail-link"
                 >
-                  Full Analysis →
+                  Full Analysis
                 </router-link>
               </div>
             </div>
@@ -455,12 +438,10 @@ onMounted(() => {
 
               <template v-else>
                 <!-- Follow Score -->
-                <div v-if="traderClassification" class="analysis-block follow-block" :class="{ 'follow-worthy': traderClassification.followWorthy }">
+                <div v-if="traderClassification" class="analysis-block follow-block follow-worthy">
                   <div class="follow-header">
                     <span class="analysis-title">Worth Following?</span>
-                    <span class="follow-badge" :class="traderClassification.followWorthy ? 'yes' : 'no'">
-                      {{ traderClassification.followWorthy ? 'YES' : 'NO' }}
-                    </span>
+                    <span class="follow-badge yes">YES</span>
                   </div>
                   <div class="score-row follow-score-row">
                     <span class="score-label">Score</span>
@@ -471,39 +452,6 @@ onMounted(() => {
                   </div>
                   <div v-if="traderClassification.followReasons.length > 0" class="classification-reasons">
                     <div v-for="reason in traderClassification.followReasons" :key="reason" class="reason-item">
-                      {{ reason }}
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Classification Scores -->
-                <div v-if="traderClassification" class="analysis-block classification-block">
-                  <span class="analysis-title">Classification Scores</span>
-                  <div class="score-bars">
-                    <div class="score-row">
-                      <span class="score-label">Insider</span>
-                      <div class="score-bar-container">
-                        <div class="score-bar insider" :style="{ width: traderClassification.insiderScore + '%' }"></div>
-                      </div>
-                      <span class="score-value">{{ traderClassification.insiderScore }}</span>
-                    </div>
-                    <div class="score-row">
-                      <span class="score-label">Bot</span>
-                      <div class="score-bar-container">
-                        <div class="score-bar bot" :style="{ width: traderClassification.botScore + '%' }"></div>
-                      </div>
-                      <span class="score-value">{{ traderClassification.botScore }}</span>
-                    </div>
-                    <div class="score-row">
-                      <span class="score-label">Whale</span>
-                      <div class="score-bar-container">
-                        <div class="score-bar whale" :style="{ width: traderClassification.whaleScore + '%' }"></div>
-                      </div>
-                      <span class="score-value">{{ traderClassification.whaleScore }}</span>
-                    </div>
-                  </div>
-                  <div v-if="traderClassification.reasons.length > 0" class="classification-reasons">
-                    <div v-for="reason in traderClassification.reasons" :key="reason" class="reason-item">
                       {{ reason }}
                     </div>
                   </div>
@@ -523,27 +471,13 @@ onMounted(() => {
                       </span>
                       <span class="analysis-label">Realized</span>
                     </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value" :class="traderClassification.unrealizedPnl >= 0 ? 'positive' : 'negative'">
-                        {{ formatUSD(traderClassification.unrealizedPnl) }}
-                      </span>
-                      <span class="analysis-label">Unrealized</span>
+                    <div v-if="traderClassification.winRate !== null" class="analysis-item">
+                      <span class="analysis-value">{{ traderClassification.winRate.toFixed(0) }}%</span>
+                      <span class="analysis-label">Win Rate</span>
                     </div>
                     <div class="analysis-item">
                       <span class="analysis-value">{{ traderClassification.marketsTraded }}</span>
                       <span class="analysis-label">Markets</span>
-                    </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value">{{ formatUSD(traderClassification.avgTradeSize) }}</span>
-                      <span class="analysis-label">Avg Trade</span>
-                    </div>
-                    <div class="analysis-item">
-                      <span class="analysis-value">{{ traderClassification.tradesPerDay.toFixed(1) }}</span>
-                      <span class="analysis-label">Trades/day</span>
-                    </div>
-                    <div v-if="traderClassification.winRate !== null" class="analysis-item">
-                      <span class="analysis-value">{{ traderClassification.winRate.toFixed(0) }}%</span>
-                      <span class="analysis-label">Resolved W/R</span>
                     </div>
                     <div v-if="traderClassification.accountAgeDays !== null" class="analysis-item">
                       <span class="analysis-value">{{ traderClassification.accountAgeDays }}d</span>
@@ -552,10 +486,6 @@ onMounted(() => {
                     <div v-if="traderClassification.leaderboardRank" class="analysis-item">
                       <span class="analysis-value">#{{ traderClassification.leaderboardRank }}</span>
                       <span class="analysis-label">Rank</span>
-                    </div>
-                    <div v-if="traderClassification.profile?.verifiedBadge" class="analysis-item">
-                      <span class="analysis-value verified">Verified</span>
-                      <span class="analysis-label">Status</span>
                     </div>
                   </div>
                 </div>
@@ -573,10 +503,6 @@ onMounted(() => {
                       <span class="analysis-label">Invested</span>
                     </div>
                     <div class="analysis-item">
-                      <span class="analysis-value">{{ formatUSD(positionStats.currentValue) }}</span>
-                      <span class="analysis-label">Current</span>
-                    </div>
-                    <div class="analysis-item">
                       <span class="analysis-value" :class="positionStats.unrealizedPnl >= 0 ? 'positive' : 'negative'">
                         {{ formatUSD(positionStats.unrealizedPnl) }}
                       </span>
@@ -590,7 +516,7 @@ onMounted(() => {
             <div class="detail-section">
               <span class="detail-label">Transaction</span>
               <code class="tx-hash">{{ shortenHash(selectedTrade.transaction_hash) }}</code>
-              <a :href="getTxUrl(selectedTrade.transaction_hash)" target="_blank" class="detail-link">View on Polygonscan ↗</a>
+              <a :href="getTxUrl(selectedTrade.transaction_hash)" target="_blank" class="detail-link">View on Polygonscan</a>
             </div>
           </div>
         </template>
@@ -603,16 +529,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.big-badge {
-  background: linear-gradient(135deg, #ff6b35, #f7931a);
-  color: white;
-  font-size: var(--font-xs);
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  letter-spacing: 1px;
-}
-
 .info-text {
   color: var(--text-muted);
   font-size: var(--font-sm);
@@ -753,23 +669,6 @@ onMounted(() => {
   width: 80px;
 }
 
-.side {
-  font-size: var(--font-sm);
-  font-weight: 600;
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--radius-sm);
-}
-
-.side.buy {
-  background: var(--status-open-bg);
-  color: var(--status-open-text);
-}
-
-.side.sell {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--accent-red);
-}
-
 .size {
   color: var(--accent-green);
   font-family: monospace;
@@ -823,54 +722,18 @@ onMounted(() => {
   color: #4caf50;
 }
 
-.follow-value.medium {
-  color: #ffc107;
-}
-
-.no-data {
-  color: var(--text-muted);
-  opacity: 0.5;
-}
-
-.take-cell {
-  width: 60px;
-  text-align: center;
-}
-
-.take-badge {
-  background: linear-gradient(135deg, #4caf50, #2e7d32);
-  color: white;
-  font-size: var(--font-xs);
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.trade-row.take-bet {
-  background: rgba(76, 175, 80, 0.08);
-}
-
-.trade-row.take-bet:hover {
-  background: rgba(76, 175, 80, 0.15);
-}
-
-.trade-row.take-bet.selected {
-  background: rgba(76, 175, 80, 0.2);
-}
-
 .trade-row {
   cursor: pointer;
   transition: background 0.15s;
+  background: rgba(76, 175, 80, 0.05);
 }
 
 .trade-row:hover {
-  background: var(--bg-tertiary);
+  background: rgba(76, 175, 80, 0.12);
 }
 
 .trade-row.selected {
-  background: var(--bg-active);
+  background: rgba(76, 175, 80, 0.18);
 }
 
 .load-more {
@@ -1045,18 +908,6 @@ onMounted(() => {
   margin-bottom: var(--spacing-sm);
 }
 
-.analysis-block.is-bot {
-  border: 1px solid #e53935;
-  background: rgba(229, 57, 53, 0.1);
-}
-
-.analysis-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-xs);
-}
-
 .analysis-title {
   font-size: var(--font-xs);
   font-weight: 600;
@@ -1087,37 +938,12 @@ onMounted(() => {
   color: var(--text-muted);
 }
 
-.bot-badge {
-  background: #e53935;
-  color: white;
-  font-size: var(--font-xs);
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.bot-reasons {
-  margin-top: var(--spacing-xs);
-  padding-top: var(--spacing-xs);
-  border-top: 1px solid var(--border-primary);
-}
-
-.bot-reason {
-  font-size: var(--font-xs);
-  color: #e53935;
-  margin-bottom: 2px;
-}
-
 .positive {
   color: var(--accent-green);
 }
 
 .negative {
   color: var(--accent-red);
-}
-
-.sep {
-  color: var(--text-muted);
 }
 
 /* Classification Styles */
@@ -1179,17 +1005,6 @@ onMounted(() => {
   color: var(--text-muted);
 }
 
-.classification-block {
-  border: 1px solid var(--border-primary);
-}
-
-.score-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: var(--spacing-xs);
-}
-
 .score-row {
   display: flex;
   align-items: center;
@@ -1217,16 +1032,8 @@ onMounted(() => {
   transition: width 0.3s ease;
 }
 
-.score-bar.insider {
-  background: linear-gradient(90deg, #ff9800, #ffc107);
-}
-
-.score-bar.bot {
-  background: linear-gradient(90deg, #e53935, #f44336);
-}
-
-.score-bar.whale {
-  background: linear-gradient(90deg, #2196f3, #03a9f4);
+.score-bar.follow {
+  background: linear-gradient(90deg, #4caf50, #8bc34a);
 }
 
 .score-value {
@@ -1250,12 +1057,8 @@ onMounted(() => {
 }
 
 .reason-item::before {
-  content: '• ';
+  content: '- ';
   color: var(--text-muted);
-}
-
-.verified {
-  color: #2196f3;
 }
 
 /* Follow Score Styles */
@@ -1287,15 +1090,7 @@ onMounted(() => {
   background: #4caf50;
 }
 
-.follow-badge.no {
-  background: #757575;
-}
-
 .follow-score-row {
   margin-bottom: var(--spacing-xs);
-}
-
-.score-bar.follow {
-  background: linear-gradient(90deg, #4caf50, #8bc34a);
 }
 </style>

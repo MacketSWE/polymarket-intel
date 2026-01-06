@@ -398,6 +398,26 @@ app.get('/api/trades/large', requireAuth, async (req, res) => {
   }
 })
 
+// Take bets endpoint - trades with take_bet = true
+app.get('/api/trades/take', requireAuth, async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+
+    const { data, error } = await supabaseAdmin
+      .from('trades')
+      .select('*')
+      .eq('take_bet', true)
+      .order('timestamp', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) throw error
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.resolve(__dirname, '../../client/dist')
   app.use(express.static(clientDist))

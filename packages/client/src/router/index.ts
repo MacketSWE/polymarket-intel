@@ -6,6 +6,7 @@ import Top from '../pages/Top.vue'
 import Trades from '../pages/Trades.vue'
 import Trader from '../pages/Trader.vue'
 import BigTrades from '../pages/BigTrades.vue'
+import TakeTrades from '../pages/TakeTrades.vue'
 import Login from '../pages/Login.vue'
 
 const router = createRouter({
@@ -51,6 +52,11 @@ const router = createRouter({
       path: '/big-trades',
       name: 'big-trades',
       component: BigTrades
+    },
+    {
+      path: '/take',
+      name: 'take',
+      component: TakeTrades
     }
   ]
 })

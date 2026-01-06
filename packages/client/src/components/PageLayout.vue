@@ -22,11 +22,12 @@ async function logout() {
   <div class="page">
     <header class="header">
       <nav class="nav">
+        <RouterLink to="/big-trades" :class="['nav-link', { active: route.path === '/big-trades' }]">Trades</RouterLink>
+        <RouterLink to="/take" :class="['nav-link nav-take', { active: route.path === '/take' }]">Take</RouterLink>
         <RouterLink to="/" :class="['nav-link', { active: route.path === '/' }]">Dashboard</RouterLink>
         <RouterLink to="/new" :class="['nav-link', { active: route.path === '/new' }]">New</RouterLink>
         <RouterLink to="/top" :class="['nav-link', { active: route.path === '/top' }]">Top</RouterLink>
-        <RouterLink to="/trades" :class="['nav-link', { active: route.path === '/trades' }]">Trades</RouterLink>
-        <RouterLink to="/big-trades" :class="['nav-link', { active: route.path === '/big-trades' }]">Big</RouterLink>
+        <RouterLink to="/trades" :class="['nav-link', { active: route.path === '/trades' }]">Debug</RouterLink>
         <RouterLink to="/trader" :class="['nav-link', { active: route.path === '/trader' }]">Trader</RouterLink>
         <RouterLink to="/markets" :class="['nav-link', { active: route.path === '/markets' }]">Markets</RouterLink>
       </nav>
@@ -88,6 +89,20 @@ async function logout() {
 .nav-link.active {
   color: var(--accent-primary-text);
   background: var(--accent-primary);
+}
+
+.nav-link.nav-take {
+  color: #4caf50;
+}
+
+.nav-link.nav-take:hover {
+  color: #66bb6a;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.nav-link.nav-take.active {
+  color: white;
+  background: #4caf50;
 }
 
 .header-slot {

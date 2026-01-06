@@ -43,18 +43,34 @@ async function backfillTraders() {
     try {
       const c = await classifyTrader(wallet)
 
-      // Update all trades for this wallet with classification
-      await supabaseAdmin
+      // Fetch all trades for this wallet to calculate take_bet per trade
+      const { data: walletTrades } = await supabaseAdmin
         .from('trades')
-        .update({
-          good_trader: c.followWorthy,
-          follow_score: c.followScore,
-          insider_score: c.insiderScore,
-          bot_score: c.botScore,
-          whale_score: c.whaleScore,
-          classification: c.type
-        })
+        .select('transaction_hash, side, size, price')
         .eq('proxy_wallet', wallet)
+
+      // Update each trade with classification and take_bet
+      for (const trade of walletTrades || []) {
+        const amount = trade.size * trade.price
+        // take_bet = true if: follow_score >= 75, side is BUY, amount >= 3000, price <= 0.65
+        const takeBet = c.followScore >= 75 &&
+          trade.side === 'BUY' &&
+          amount >= 3000 &&
+          trade.price <= 0.65
+
+        await supabaseAdmin
+          .from('trades')
+          .update({
+            good_trader: c.followWorthy,
+            follow_score: c.followScore,
+            insider_score: c.insiderScore,
+            bot_score: c.botScore,
+            whale_score: c.whaleScore,
+            classification: c.type,
+            take_bet: takeBet
+          })
+          .eq('transaction_hash', trade.transaction_hash)
+      }
 
       processed++
       if (c.followWorthy) goodTraders++
