@@ -51,6 +51,15 @@ interface Classification {
 }
 
 function mapToDbRecord(trade: RawTrade, classification?: Classification) {
+  const amount = trade.size * trade.price
+  const followScore = classification?.follow_score ?? 0
+
+  // take_bet = true if: follow_score >= 75, side is BUY, amount >= 3000, price <= 0.65
+  const takeBet = followScore >= 75 &&
+    trade.side === 'BUY' &&
+    amount >= 3000 &&
+    trade.price <= 0.65
+
   return {
     transaction_hash: trade.transactionHash,
     proxy_wallet: trade.proxyWallet,
@@ -77,7 +86,8 @@ function mapToDbRecord(trade: RawTrade, classification?: Classification) {
     insider_score: classification?.insider_score ?? null,
     bot_score: classification?.bot_score ?? null,
     whale_score: classification?.whale_score ?? null,
-    classification: classification?.classification ?? null
+    classification: classification?.classification ?? null,
+    take_bet: classification ? takeBet : null
   }
 }
 
