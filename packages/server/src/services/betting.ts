@@ -197,11 +197,6 @@ async function getTokenIdForOutcome(slug: string, outcome: string): Promise<{ to
 
   if (!token) return { error: `Outcome "${outcome}" not found` }
 
-  // Check if this outcome already has a winner (market resolved)
-  if (token.winner !== undefined) {
-    return { error: 'Market has already resolved' }
-  }
-
   return {
     tokenId: token.token_id,
     tickSize: clobMarket.min_tick_size || '0.01',
