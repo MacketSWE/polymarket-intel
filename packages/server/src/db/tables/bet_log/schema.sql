@@ -14,7 +14,7 @@ CREATE TABLE bet_log (
   error_message TEXT,
   source TEXT CHECK (source IN ('manual', 'auto')) DEFAULT 'manual',
   -- Trigger info (if auto-bet)
-  trigger_trade_id UUID REFERENCES trades(id),
+  trigger_trade_id UUID REFERENCES top_trader_trades(id),
   trigger_wallet TEXT,
   trigger_follow_score INTEGER,
   -- Resolution tracking

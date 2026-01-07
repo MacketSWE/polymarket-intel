@@ -502,7 +502,7 @@ export async function getBetLogs(limit = 50): Promise<BetLog[]> {
  * Auto-copy a trade from a top trader
  */
 export async function autoCopyTrade(params: {
-  tradeId: string
+  tradeId?: string
   proxyWallet: string
   followScore: number
   marketSlug: string
