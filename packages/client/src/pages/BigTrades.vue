@@ -62,6 +62,17 @@ interface Position {
   redeemable: boolean
 }
 
+interface ResolvedStats {
+  allCount: number
+  allWon: number
+  allLost: number
+  allProfitPerDollar: number
+  takeCount: number
+  takeWon: number
+  takeLost: number
+  takeProfitPerDollar: number
+}
+
 interface TraderClassification {
   type: 'insider' | 'bot' | 'whale' | 'normal'
   confidence: number
@@ -99,6 +110,7 @@ const sortDir = ref<'asc' | 'desc'>('desc')
 const hasMore = ref(true)
 const PAGE_SIZE = 500
 const activeFilter = ref<'all' | 'take' | 'resolved'>('all')
+const resolvedStats = ref<ResolvedStats | null>(null)
 
 // Trader analysis state
 const traderLoading = ref(false)
@@ -335,6 +347,18 @@ function loadMore() {
   }
 }
 
+async function fetchResolvedStats() {
+  try {
+    const response = await fetch('/api/trades/resolved-stats')
+    const data = await response.json()
+    if (data.success) {
+      resolvedStats.value = data.data
+    }
+  } catch (e) {
+    console.error('Failed to fetch resolved stats:', e)
+  }
+}
+
 function setFilter(filter: 'all' | 'take' | 'resolved') {
   if (activeFilter.value !== filter) {
     activeFilter.value = filter
@@ -344,6 +368,7 @@ function setFilter(filter: 'all' | 'take' | 'resolved') {
 
 onMounted(() => {
   fetchTrades()
+  fetchResolvedStats()
 })
 </script>
 
@@ -367,6 +392,24 @@ onMounted(() => {
           :class="['filter-btn', { active: activeFilter === 'resolved' }]"
           :disabled="loading"
         >Resolved</button>
+      </div>
+      <!-- Resolved Stats -->
+      <div v-if="resolvedStats" class="stats-banner">
+        <div class="stat-group">
+          <span class="stat-label">All:</span>
+          <span class="stat-value">{{ resolvedStats.allWon }}W / {{ resolvedStats.allLost }}L</span>
+          <span :class="['stat-profit', resolvedStats.allProfitPerDollar >= 0 ? 'positive' : 'negative']">
+            {{ resolvedStats.allProfitPerDollar >= 0 ? '+' : '' }}{{ (resolvedStats.allProfitPerDollar * 100).toFixed(1) }}¢/$
+          </span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-group take">
+          <span class="stat-label">Takes:</span>
+          <span class="stat-value">{{ resolvedStats.takeWon }}W / {{ resolvedStats.takeLost }}L</span>
+          <span :class="['stat-profit', resolvedStats.takeProfitPerDollar >= 0 ? 'positive' : 'negative']">
+            {{ resolvedStats.takeProfitPerDollar >= 0 ? '+' : '' }}{{ (resolvedStats.takeProfitPerDollar * 100).toFixed(1) }}¢/$
+          </span>
+        </div>
       </div>
       <span class="subnav-spacer"></span>
       <button @click="fetchTrades(false)" :disabled="loading" class="btn btn-sm">
@@ -1497,5 +1540,55 @@ onMounted(() => {
 
 .score-bar.follow {
   background: linear-gradient(90deg, #4caf50, #8bc34a);
+}
+
+/* Stats Banner */
+.stats-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  background: var(--bg-tertiary);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+}
+
+.stat-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.stat-group.take .stat-label {
+  color: #4caf50;
+}
+
+.stat-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.stat-value {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.stat-profit {
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.stat-profit.positive {
+  color: var(--accent-green);
+}
+
+.stat-profit.negative {
+  color: var(--accent-red);
+}
+
+.stat-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-primary);
 }
 </style>

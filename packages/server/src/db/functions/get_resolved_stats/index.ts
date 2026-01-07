@@ -4,11 +4,11 @@ export interface ResolvedStats {
   allCount: number
   allWon: number
   allLost: number
-  allProfit: number
+  allProfitPerDollar: number
   takeCount: number
   takeWon: number
   takeLost: number
-  takeProfit: number
+  takeProfitPerDollar: number
 }
 
 export async function getResolvedStats(): Promise<ResolvedStats | null> {
@@ -21,10 +21,10 @@ export async function getResolvedStats(): Promise<ResolvedStats | null> {
     allCount: Number(row.all_count),
     allWon: Number(row.all_won),
     allLost: Number(row.all_lost),
-    allProfit: Number(row.all_profit),
+    allProfitPerDollar: Number(row.all_profit_per_dollar),
     takeCount: Number(row.take_count),
     takeWon: Number(row.take_won),
     takeLost: Number(row.take_lost),
-    takeProfit: Number(row.take_profit),
+    takeProfitPerDollar: Number(row.take_profit_per_dollar),
   }
 }

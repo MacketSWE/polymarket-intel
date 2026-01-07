@@ -3,11 +3,11 @@ RETURNS TABLE (
   all_count BIGINT,
   all_won BIGINT,
   all_lost BIGINT,
-  all_profit DECIMAL,
+  all_profit_per_dollar DECIMAL,
   take_count BIGINT,
   take_won BIGINT,
   take_lost BIGINT,
-  take_profit DECIMAL
+  take_profit_per_dollar DECIMAL
 ) AS $$
 BEGIN
   RETURN QUERY
@@ -15,12 +15,20 @@ BEGIN
     COUNT(*) FILTER (WHERE resolved_status IS NOT NULL) AS all_count,
     COUNT(*) FILTER (WHERE resolved_status = 'won') AS all_won,
     COUNT(*) FILTER (WHERE resolved_status = 'lost') AS all_lost,
-    COALESCE(SUM(amount * profit_per_dollar) FILTER (WHERE resolved_status IS NOT NULL), 0) AS all_profit,
+    COALESCE(
+      SUM(amount * profit_per_dollar) FILTER (WHERE resolved_status IS NOT NULL) /
+      NULLIF(SUM(amount) FILTER (WHERE resolved_status IS NOT NULL), 0),
+      0
+    ) AS all_profit_per_dollar,
     COUNT(*) FILTER (WHERE resolved_status IS NOT NULL AND take_bet = true) AS take_count,
     COUNT(*) FILTER (WHERE resolved_status = 'won' AND take_bet = true) AS take_won,
     COUNT(*) FILTER (WHERE resolved_status = 'lost' AND take_bet = true) AS take_lost,
-    COALESCE(SUM(amount * profit_per_dollar) FILTER (WHERE resolved_status IS NOT NULL AND take_bet = true), 0) AS take_profit
+    COALESCE(
+      SUM(amount * profit_per_dollar) FILTER (WHERE resolved_status IS NOT NULL AND take_bet = true) /
+      NULLIF(SUM(amount) FILTER (WHERE resolved_status IS NOT NULL AND take_bet = true), 0),
+      0
+    ) AS take_profit_per_dollar
   FROM trades
-  WHERE side = 'BUY';
+  WHERE side = 'BUY' AND price <= 0.9;
 END;
 $$ LANGUAGE plpgsql;
