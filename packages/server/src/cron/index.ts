@@ -49,21 +49,21 @@ export function startCronJobs() {
 
 async function runTradesSync() {
   try {
-    console.log(`[${new Date().toISOString()}] Syncing trades...`)
+    console.log(`[TRADES] Starting sync...`)
     const result = await syncTrades()
-    console.log(`Done: ${result.fetched} fetched, ${result.uploaded} uploaded`)
+    console.log(`[TRADES] Done: ${result.fetched} fetched, ${result.uploaded} uploaded`)
   } catch (error) {
-    console.error('Trades sync failed:', error)
+    console.error('[TRADES] Sync failed:', error)
   }
 }
 
 async function runResolutionSync() {
   try {
-    console.log(`[${new Date().toISOString()}] Syncing resolutions...`)
+    console.log(`[RESOLUTION] Starting sync...`)
     const result = await syncResolutions()
-    console.log(`Done: ${result.checked} checked, ${result.resolved} resolved (${result.won}W/${result.lost}L)`)
+    console.log(`[RESOLUTION] Done: ${result.checked} checked, ${result.resolved} resolved (${result.won}W/${result.lost}L)`)
   } catch (error) {
-    console.error('Resolution sync failed:', error)
+    console.error('[RESOLUTION] Sync failed:', error)
   }
 }
 
@@ -71,43 +71,43 @@ async function runTopPVSyncIfEmpty() {
   try {
     const empty = await isTableEmpty()
     if (empty) {
-      console.log(`[${new Date().toISOString()}] Top P/V table empty, populating...`)
+      console.log(`[TOP-PV] Table empty, populating...`)
       const result = await syncTopPVTraders()
-      console.log(`Done: ${result.count} top P/V traders inserted`)
+      console.log(`[TOP-PV] Done: ${result.count} traders inserted`)
     } else {
-      console.log('Top P/V table already has data, skipping initial sync')
+      console.log('[TOP-PV] Table has data, skipping initial sync')
     }
   } catch (error) {
-    console.error('Top P/V sync (initial) failed:', error)
+    console.error('[TOP-PV] Initial sync failed:', error)
   }
 }
 
 async function runTopPVSync() {
   try {
-    console.log(`[${new Date().toISOString()}] Syncing top P/V traders...`)
+    console.log(`[TOP-PV] Starting sync...`)
     const result = await syncTopPVTraders()
-    console.log(`Done: ${result.count} top P/V traders updated`)
+    console.log(`[TOP-PV] Done: ${result.count} traders updated`)
   } catch (error) {
-    console.error('Top P/V sync failed:', error)
+    console.error('[TOP-PV] Sync failed:', error)
   }
 }
 
 async function runTopTraderTradesSync() {
   try {
-    console.log(`[${new Date().toISOString()}] Syncing top trader trades...`)
+    console.log(`[TOP-TRADES] Starting sync...`)
     const result = await syncTopTraderTrades()
-    console.log(`Done: ${result.fetched} fetched, ${result.upserted} upserted, ${result.skipped} skipped`)
+    console.log(`[TOP-TRADES] Done: ${result.fetched} fetched, ${result.upserted} upserted, ${result.skipped} skipped`)
   } catch (error) {
-    console.error('Top trader trades sync failed:', error)
+    console.error('[TOP-TRADES] Sync failed:', error)
   }
 }
 
 async function runTopTraderTradesResolutionSync() {
   try {
-    console.log(`[${new Date().toISOString()}] Syncing top trader trades resolutions...`)
+    console.log(`[TOP-RESOLUTION] Starting sync...`)
     const result = await syncTopTraderTradesResolutions()
-    console.log(`Done: ${result.checked} checked, ${result.resolved} resolved (${result.won}W/${result.lost}L), ${result.pending} pending`)
+    console.log(`[TOP-RESOLUTION] Done: ${result.checked} checked, ${result.resolved} resolved (${result.won}W/${result.lost}L), ${result.pending} pending`)
   } catch (error) {
-    console.error('Top trader trades resolution sync failed:', error)
+    console.error('[TOP-RESOLUTION] Sync failed:', error)
   }
 }

@@ -48,7 +48,7 @@ async function fetchMarketStatus(conditionId: string): Promise<{
       endDate: market.end_date_iso || null
     }
   } catch (e) {
-    console.error(`Failed to fetch market ${conditionId}:`, (e as Error).message)
+    console.error(`[TOP-RESOLUTION] Failed to fetch market ${conditionId}:`, (e as Error).message)
     return null
   }
 }
@@ -74,12 +74,12 @@ export async function syncTopTraderTradesResolutions(): Promise<{
     .limit(500)
 
   if (error) {
-    console.error('Failed to fetch positions:', error)
+    console.error('[TOP-RESOLUTION] Failed to fetch positions:', error)
     throw error
   }
 
   const positionsList = (positions || []) as Position[]
-  console.log(`  Found ${positionsList.length} unresolved positions to check`)
+  console.log(`[TOP-RESOLUTION] Found ${positionsList.length} unresolved positions to check`)
 
   if (positionsList.length === 0) {
     return { checked: 0, resolved: 0, won: 0, lost: 0, pending: 0, errors: 0 }
@@ -93,7 +93,7 @@ export async function syncTopTraderTradesResolutions(): Promise<{
     positionsByCondition.set(position.condition_id, existing)
   }
 
-  console.log(`  Checking ${positionsByCondition.size} unique markets...`)
+  console.log(`[TOP-RESOLUTION] Checking ${positionsByCondition.size} unique markets...`)
 
   let checked = 0
   let resolved = 0
@@ -150,7 +150,7 @@ export async function syncTopTraderTradesResolutions(): Promise<{
 
         if (updateError) {
           errors++
-          console.error(`  Failed to update position ${position.id}:`, updateError)
+          console.error(`[TOP-RESOLUTION] Failed to update position ${position.id}:`, updateError)
           continue
         }
 
@@ -163,7 +163,7 @@ export async function syncTopTraderTradesResolutions(): Promise<{
       await new Promise(r => setTimeout(r, DELAY_MS))
     } catch (e) {
       errors++
-      console.error(`  Error checking ${conditionId.slice(0, 16)}...: ${(e as Error).message}`)
+      console.error(`[TOP-RESOLUTION] Error checking ${conditionId.slice(0, 16)}...: ${(e as Error).message}`)
     }
   }
 

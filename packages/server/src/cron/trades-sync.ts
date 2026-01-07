@@ -115,7 +115,7 @@ export async function syncTrades() {
   // Filter trades >= $2500
   const largeTrades = trades.filter(t => t.size * t.price >= MIN_AMOUNT_USD)
 
-  console.log(`Found ${largeTrades.length} trades >= $${MIN_AMOUNT_USD}`)
+  console.log(`[TRADES] Found ${largeTrades.length} trades >= $${MIN_AMOUNT_USD}`)
 
   if (largeTrades.length === 0) {
     return { fetched: trades.length, uploaded: 0, classified: 0 }
@@ -153,7 +153,7 @@ export async function syncTrades() {
 
   // Classify new wallets (limit to 10 per sync to avoid API overload)
   if (newWallets.length > 0) {
-    console.log(`Classifying ${Math.min(newWallets.length, 10)} new wallets...`)
+    console.log(`[TRADES] Classifying ${Math.min(newWallets.length, 10)} new wallets...`)
 
     for (const wallet of newWallets.slice(0, 10)) {
       try {
@@ -171,9 +171,9 @@ export async function syncTrades() {
         classificationMap.set(wallet, classification)
 
         classified++
-        console.log(`  ${wallet.slice(0, 10)}... → ${c.followWorthy ? 'GOOD' : 'skip'} (score: ${c.followScore})`)
+        console.log(`[TRADES]   ${wallet.slice(0, 10)}... → ${c.followWorthy ? 'GOOD' : 'skip'} (score: ${c.followScore})`)
       } catch (e) {
-        console.error(`  Failed to classify ${wallet.slice(0, 10)}...:`, (e as Error).message)
+        console.error(`[TRADES] Failed to classify ${wallet.slice(0, 10)}...:`, (e as Error).message)
       }
     }
   }
@@ -199,7 +199,7 @@ export async function syncTrades() {
   // Fetch end dates for new conditions (limit to 20 per sync)
   const newConditions = uniqueConditions.filter(c => !endDateMap.has(c))
   if (newConditions.length > 0) {
-    console.log(`Fetching end dates for ${Math.min(newConditions.length, 20)} markets...`)
+    console.log(`[TRADES] Fetching end dates for ${Math.min(newConditions.length, 20)} markets...`)
     for (const conditionId of newConditions.slice(0, 20)) {
       const endDate = await fetchMarketEndDate(conditionId)
       endDateMap.set(conditionId, endDate)

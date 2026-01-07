@@ -73,7 +73,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
     return { fetched: 0, upserted: 0, skipped: 0 }
   }
 
-  console.log(`  Fetching trades for ${wallets.length} wallets...`)
+  console.log(`[TOP-TRADES] Fetching trades for ${wallets.length} wallets...`)
 
   // 2. Fetch trades (rate-limited)
   const allTrades = await fetchAllTrades(wallets)
@@ -109,7 +109,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
     return { fetched: trades.length, upserted: 0, skipped }
   }
 
-  console.log(`  Processing ${newTrades.length} new trades (${skipped} already exist)...`)
+  console.log(`[TOP-TRADES] Processing ${newTrades.length} new trades (${skipped} already exist)...`)
 
   // 4. Upsert each trade
   let upserted = 0
@@ -186,7 +186,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
       upserted++
     } catch (err) {
       // Log but continue with other trades
-      console.error(`  Failed to upsert trade ${trade.transactionHash.slice(0, 10)}...:`, (err as Error).message)
+      console.error(`[TOP-TRADES] Failed to upsert trade ${trade.transactionHash.slice(0, 10)}...:`, (err as Error).message)
     }
   }
 

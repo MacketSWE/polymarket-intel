@@ -49,7 +49,7 @@ async function fetchMarketStatus(conditionId: string): Promise<{
       endDate: market.end_date_iso || null
     }
   } catch (e) {
-    console.error(`Failed to fetch market ${conditionId}:`, (e as Error).message)
+    console.error(`[RESOLUTION] Failed to fetch market ${conditionId}:`, (e as Error).message)
     return null
   }
 }
@@ -77,12 +77,12 @@ export async function syncResolutions(): Promise<{
     .limit(500)
 
   if (error) {
-    console.error('Failed to fetch trades:', error)
+    console.error('[RESOLUTION] Failed to fetch trades:', error)
     throw error
   }
 
   const tradesList = (trades || []) as Trade[]
-  console.log(`Found ${tradesList.length} unresolved trades to check`)
+  console.log(`[RESOLUTION] Found ${tradesList.length} unresolved trades to check`)
 
   if (tradesList.length === 0) {
     return { checked: 0, resolved: 0, won: 0, lost: 0, pending: 0, errors: 0 }
@@ -96,7 +96,7 @@ export async function syncResolutions(): Promise<{
     tradesByCondition.set(trade.condition_id, existing)
   }
 
-  console.log(`Checking ${tradesByCondition.size} unique markets...\n`)
+  console.log(`[RESOLUTION] Checking ${tradesByCondition.size} unique markets...`)
 
   let checked = 0
   let resolved = 0
@@ -111,7 +111,7 @@ export async function syncResolutions(): Promise<{
 
       if (!status) {
         errors++
-        console.log(`[ERROR] Market not found: ${conditionId.slice(0, 16)}...`)
+        console.log(`[RESOLUTION] Market not found: ${conditionId.slice(0, 16)}...`)
         continue
       }
 
@@ -133,7 +133,7 @@ export async function syncResolutions(): Promise<{
           .update(updateData)
           .in('transaction_hash', conditionTrades.map(t => t.transaction_hash))
 
-        console.log(`[PENDING] ${conditionId.slice(0, 16)}... - ${conditionTrades.length} trades`)
+        console.log(`[RESOLUTION] Pending: ${conditionId.slice(0, 16)}... - ${conditionTrades.length} trades`)
         continue
       }
 
@@ -155,7 +155,7 @@ export async function syncResolutions(): Promise<{
 
         if (updateError) {
           errors++
-          console.error(`[ERROR] Failed to update ${trade.transaction_hash}:`, updateError)
+          console.error(`[RESOLUTION] Failed to update ${trade.transaction_hash}:`, updateError)
           continue
         }
 
@@ -163,22 +163,18 @@ export async function syncResolutions(): Promise<{
         if (resolvedStatus === 'won') won++
         else lost++
 
-        console.log(`[${resolvedStatus.toUpperCase()}] ${trade.transaction_hash.slice(0, 16)}... (${trade.outcome} vs ${status.winningOutcome})`)
+        console.log(`[RESOLUTION] ${resolvedStatus.toUpperCase()}: ${trade.transaction_hash.slice(0, 16)}... (${trade.outcome} vs ${status.winningOutcome})`)
       }
 
       // Rate limit
       await new Promise(r => setTimeout(r, DELAY_MS))
     } catch (e) {
       errors++
-      console.error(`[ERROR] ${conditionId.slice(0, 16)}...: ${(e as Error).message}`)
+      console.error(`[RESOLUTION] Error: ${conditionId.slice(0, 16)}...: ${(e as Error).message}`)
     }
   }
 
-  console.log('\n=== RESOLUTION SYNC COMPLETE ===')
-  console.log(`Checked: ${checked}`)
-  console.log(`Resolved: ${resolved} (Won: ${won}, Lost: ${lost})`)
-  console.log(`Pending: ${pending}`)
-  console.log(`Errors: ${errors}`)
+  console.log(`[RESOLUTION] Summary: checked=${checked}, resolved=${resolved} (${won}W/${lost}L), pending=${pending}, errors=${errors}`)
 
   return { checked, resolved, won, lost, pending, errors }
 }
