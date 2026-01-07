@@ -28,7 +28,11 @@ CREATE TABLE trades (
   bot_score INTEGER,
   whale_score INTEGER,
   classification TEXT,
-  take_bet BOOLEAN DEFAULT NULL
+  take_bet BOOLEAN DEFAULT NULL,
+  -- Resolution tracking
+  resolved_status TEXT CHECK (resolved_status IN ('won', 'lost')),
+  end_date TIMESTAMPTZ,
+  last_resolution_check TIMESTAMPTZ
 );
 
 CREATE INDEX idx_trades_proxy_wallet ON trades(proxy_wallet);
@@ -37,6 +41,8 @@ CREATE INDEX idx_trades_event_slug ON trades(event_slug);
 CREATE INDEX idx_trades_side ON trades(side);
 CREATE INDEX idx_trades_good_trader ON trades(good_trader) WHERE good_trader = true;
 CREATE INDEX idx_trades_follow_score ON trades(follow_score DESC);
+CREATE INDEX idx_trades_take_bet_unresolved ON trades(take_bet, end_date) WHERE take_bet = true AND resolved_status IS NULL;
+CREATE INDEX idx_trades_condition_id ON trades(condition_id);
 
 -- Enable Row Level Security
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
