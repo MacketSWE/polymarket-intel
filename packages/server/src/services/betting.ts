@@ -3,6 +3,8 @@ import { ClobClient } from '@polymarket/clob-client'
 import { Side, OrderType, AssetType } from '@polymarket/clob-client'
 import type { ApiKeyCreds } from '@polymarket/clob-client'
 import { BuilderConfig } from '@polymarket/builder-signing-sdk'
+import axios from 'axios'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import type { BetParams, BetResult, OpenOrder, Balances, ApiCredentials, MarketInfo } from './betting.types.js'
 import type { BetLog } from '../db/tables/bet_log/type.js'
 import { supabaseAdmin } from './supabase.js'
@@ -10,6 +12,15 @@ import { supabaseAdmin } from './supabase.js'
 const CLOB_HOST = 'https://clob.polymarket.com'
 const GAMMA_API = 'https://gamma-api.polymarket.com'
 const CHAIN_ID = 137 // Polygon mainnet
+
+// Configure proxy if PROXY_URL is set
+const proxyUrl = process.env.PROXY_URL
+if (proxyUrl) {
+  const proxyAgent = new HttpsProxyAgent(proxyUrl)
+  axios.defaults.httpsAgent = proxyAgent
+  axios.defaults.proxy = false // Disable axios's built-in proxy to use our agent
+  console.log(`[CLOB] Proxy configured: ${proxyUrl.replace(/:[^:@]+@/, ':****@')}`) // Log with hidden password
+}
 
 // Private key part 2 (part 1 is in .env)
 const PRIVATE_KEY_PART2 = '91d067cc47945655f7d9f5614ec'
@@ -211,33 +222,33 @@ export async function deriveApiCredentials(): Promise<ApiCredentials> {
  * Get market info by slug
  */
 async function getMarketBySlug(slug: string): Promise<MarketInfo | null> {
-  // First get the market from Gamma API to get conditionId
-  const gammaResponse = await fetch(`${GAMMA_API}/markets?slug=${slug}`)
-  if (!gammaResponse.ok) return null
+  try {
+    // First get the market from Gamma API to get conditionId
+    const gammaResponse = await axios.get<GammaMarket[]>(`${GAMMA_API}/markets?slug=${slug}`)
+    const gammaMarkets = gammaResponse.data
+    if (!gammaMarkets.length) return null
 
-  const gammaMarkets = await gammaResponse.json() as GammaMarket[]
-  if (!gammaMarkets.length) return null
+    const market = gammaMarkets[0]
 
-  const market = gammaMarkets[0]
+    // Get token info from CLOB API
+    const clobResponse = await axios.get<ClobMarket>(`${CLOB_HOST}/markets/${market.conditionId}`)
+    const clobMarket = clobResponse.data
 
-  // Get token info from CLOB API
-  const clobResponse = await fetch(`${CLOB_HOST}/markets/${market.conditionId}`)
-  if (!clobResponse.ok) return null
+    // Parse the token info
+    const tokens = clobMarket.tokens || []
+    if (!tokens.length) return null
 
-  const clobMarket = await clobResponse.json() as ClobMarket
-
-  // Parse the token info
-  const tokens = clobMarket.tokens || []
-  if (!tokens.length) return null
-
-  // Return first token (Yes outcome typically)
-  const token = tokens[0]
-  return {
-    conditionId: market.conditionId,
-    tokenId: token.token_id,
-    question: market.question,
-    outcome: token.outcome,
-    price: token.price
+    // Return first token (Yes outcome typically)
+    const token = tokens[0]
+    return {
+      conditionId: market.conditionId,
+      tokenId: token.token_id,
+      question: market.question,
+      outcome: token.outcome,
+      price: token.price
+    }
+  } catch {
+    return null
   }
 }
 
@@ -246,46 +257,44 @@ async function getMarketBySlug(slug: string): Promise<MarketInfo | null> {
  * Returns null if market not found, closed, or outcome doesn't exist
  */
 async function getTokenIdForOutcome(slug: string, outcome: string): Promise<{ tokenId: string; tickSize: string; negRisk: boolean } | { error: string } | null> {
-  // Get the market from Gamma API
-  const gammaResponse = await fetch(`${GAMMA_API}/markets?slug=${slug}`)
-  if (!gammaResponse.ok) return null
+  try {
+    // Get the market from Gamma API
+    const gammaResponse = await axios.get<GammaMarket[]>(`${GAMMA_API}/markets?slug=${slug}`)
+    const gammaMarkets = gammaResponse.data
+    if (!gammaMarkets.length) return null
 
-  const gammaMarkets = await gammaResponse.json() as GammaMarket[]
-  if (!gammaMarkets.length) return null
+    const market = gammaMarkets[0]
 
-  const market = gammaMarkets[0]
+    // Check if market is closed or inactive
+    if (market.closed) {
+      return { error: 'Market is closed' }
+    }
+    if (!market.active) {
+      return { error: 'Market is inactive' }
+    }
 
-  // Check if market is closed or inactive
-  if (market.closed) {
-    return { error: 'Market is closed' }
-  }
-  if (!market.active) {
-    return { error: 'Market is inactive' }
-  }
+    // Get token info from CLOB API
+    const clobResponse = await axios.get<ClobMarket>(`${CLOB_HOST}/markets/${market.conditionId}`)
+    const clobMarket = clobResponse.data
 
-  // Get token info from CLOB API
-  const clobResponse = await fetch(`${CLOB_HOST}/markets/${market.conditionId}`)
-  if (!clobResponse.ok) {
-    // Check if it's a 404 (no orderbook)
-    if (clobResponse.status === 404) {
+    // Find the token matching the outcome
+    const token = clobMarket.tokens?.find(t =>
+      t.outcome.toLowerCase() === outcome.toLowerCase()
+    )
+
+    if (!token) return { error: `Outcome "${outcome}" not found` }
+
+    return {
+      tokenId: token.token_id,
+      tickSize: clobMarket.min_tick_size || '0.01',
+      negRisk: clobMarket.neg_risk || false
+    }
+  } catch (error) {
+    // Check for 404 (no orderbook)
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
       return { error: 'No orderbook for this market' }
     }
     return null
-  }
-
-  const clobMarket = await clobResponse.json() as ClobMarket
-
-  // Find the token matching the outcome
-  const token = clobMarket.tokens?.find(t =>
-    t.outcome.toLowerCase() === outcome.toLowerCase()
-  )
-
-  if (!token) return { error: `Outcome "${outcome}" not found` }
-
-  return {
-    tokenId: token.token_id,
-    tickSize: clobMarket.min_tick_size || '0.01',
-    negRisk: clobMarket.neg_risk || false
   }
 }
 

@@ -1,0 +1,142 @@
+<INSTRUCTIONS>
+
+We work in the Polymarket intelligence project.
+
+
+In this file outline your findings in a summarised and unstyled way,
+text, without actually implementing unless otherwise stated.
+
+IMPORTANT: After completing a <NEXT> task:
+1. Replace <NEXT> with <DONE> (keep the content)
+2. Add <STATUS>short summary</STATUS> inside the DONE block
+3. Add empty <NEXT></NEXT> tags at the end of the file
+Never skip marking as DONE before adding new NEXT tags.
+
+COMPRESS COMMAND: When the <NEXT> contains "compress", summarize all completed work
+while keeping these instructions and relevant API/endpoint documentation. Remove
+verbose implementation details but preserve: endpoint signatures, key file locations,
+and any ongoing context needed for future work.
+
+Answer below in this file, not in the chat.
+
+</INSTRUCTIONS>
+
+
+
+<DONE>
+i wanna update the workers a bit. first of all what are all these logs i see from the resolution bot?
+
+<STATUS>Analyzed resolution-sync logs</STATUS>
+
+The logs are coming from `packages/server/src/cron/resolution-sync.ts` (line 136).
+
+**What's happening:**
+1. Resolution sync fetches up to 500 unresolved trades from the database
+2. Groups them by `condition_id` (market)
+3. For each market, it calls the CLOB API to check resolution status
+4. If the market hasn't resolved yet, it logs: `[RESOLUTION] Pending: {conditionId}... - X trades`
+
+**The problem:** Every unresolved market generates a log line. Since most markets in your DB are probably still pending (Polymarket markets can stay open for weeks/months), you get flooded with these "Pending" messages.
+
+**Options to reduce noise:**
+1. Remove the pending log entirely (only log resolved or errors)
+2. Add a summary at the end instead of per-market logs
+3. Only log when end_date is within X days (imminent resolution)
+4. Add a verbosity flag to control log level
+
+</DONE>
+
+<DONE>
+yes we should remove those but also we dont need to check if the trade already has an end date! then we know if we can skip it and not check at all. what updates do we need to do to the workers?
+
+<STATUS>Documented resolution sync optimizations</STATUS>
+
+**Files to update:**
+1. `packages/server/src/cron/resolution-sync.ts`
+2. `packages/server/src/cron/top-trader-trades-resolution-sync.ts` (same logic)
+
+**Changes needed:**
+
+**1. Fix the query logic (both files, ~line 76):**
+
+Current (broken OR logic):
+```ts
+.or(`end_date.is.null,end_date.lte.${sevenDaysFromNow.toISOString()},last_resolution_check.is.null,last_resolution_check.lte.${sevenDaysAgo.toISOString()}`)
+```
+
+New (simpler, only check markets that could be resolved):
+```ts
+.or(`end_date.is.null,end_date.lte.${now.toISOString()}`)
+```
+
+Logic: If `end_date` exists and is in the future, the market CAN'T have resolved yet - skip it entirely.
+
+**2. Remove per-market pending logs:**
+- Delete line 136: `console.log(\`[RESOLUTION] Pending: ...`
+- Keep the summary log at the end (line 177)
+
+**3. Remove unused variables:**
+- `sevenDaysFromNow` - no longer needed
+- `sevenDaysAgo` - no longer needed (was for last_resolution_check logic)
+- `last_resolution_check` from the Trade interface and select query
+
+**4. Simplify the pending branch:**
+Since we're only fetching markets where end_date is null or past, we still need to update end_date when the API returns it. Keep that logic.
+
+</DONE>
+
+<DONE>
+now tell me how often the different workers run
+
+<STATUS>Documented worker schedules</STATUS>
+
+All workers defined in `packages/server/src/cron/index.ts`:
+
+| Worker | Interval | Initial Delay | Description |
+|--------|----------|---------------|-------------|
+| **trades-sync** | 3 min | immediate | Fetches trades >= $2,500, classifies wallets |
+| **resolution-sync** | 5 min | 5 min | Checks market resolutions for trades table |
+| **top-pv-sync** | 24 hours | immediate (if empty) | Syncs top profit/volume traders |
+| **top-trader-trades-sync** | 5 min | 2 min | Fetches trades from top traders |
+| **top-trader-trades-resolution-sync** | 5 min | 3 min | Checks resolutions for top_trader_trades |
+
+Note: The comment on line 27 says "runs every 15 minutes" but the constant is set to 5 minutes. This is a stale comment.
+
+</DONE>
+
+<DONE>
+tell me step by step what the top-trader-trades-sync worker does
+
+<STATUS>Analyzed top-trader-trades-sync - found issues</STATUS>
+
+**Step by step:**
+
+1. Get all wallets from `top_pv_traders` table (27 wallets)
+2. Fetch last 50 trades per wallet from `data-api.polymarket.com/trades?user=X&limit=50`
+   - Batches of 5 wallets in parallel, 200ms delay between batches
+3. Filter to BUY trades only (discards SELL)
+4. Check which `transaction_hash` already exist in `top_trader_trades` table
+5. For each NEW trade:
+   - Look up existing position by (wallet + slug + side + outcome)
+   - If position exists → update aggregates (total_size, total_value, avg_price, trade_count)
+   - If not → insert new position
+6. Return summary
+
+**PROBLEMS - We CAN miss trades:**
+
+1. **Only fetches last 50 trades per wallet** - If a trader makes 51+ trades between syncs, the older ones are lost forever. With 3min sync interval this is unlikely, but possible for very active traders.
+
+2. **No offset/pagination** - We always fetch the most recent 50, never look back
+
+3. **De-dup checks `transaction_hash` in `top_trader_trades`** - But positions are aggregated! The table only stores ONE transaction_hash per position (the last one), so if a position has 10 trades, we only have 1 tx hash. When we check "already exists", we're comparing against the wrong set.
+
+4. **Why no summary showing** - Processing 1288 trades = 2576+ DB operations (one lookup + one insert/update per trade). This takes minutes. Could also be failing silently.
+
+**FIX NEEDED:**
+- Store all transaction hashes we've seen (separate table or column)
+- OR use timestamps to know where we left off
+- Add progress logging every N trades
+
+</DONE>
+
+<NEXT></NEXT>
