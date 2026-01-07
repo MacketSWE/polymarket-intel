@@ -4,11 +4,11 @@ import { syncTopPVTraders, isTableEmpty } from './top-pv-sync.js'
 import { syncTopTraderTrades } from './top-trader-trades-sync.js'
 import { syncTopTraderTradesResolutions } from './top-trader-trades-resolution-sync.js'
 
-const SYNC_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
-const RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const SYNC_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+const RESOLUTION_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
 const TOP_PV_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
-const TOP_TRADER_TRADES_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
-const TOP_TRADER_TRADES_RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const TOP_TRADER_TRADES_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
+const TOP_TRADER_TRADES_RESOLUTION_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
 
 export function startCronJobs() {
   if (process.env.NODE_ENV !== 'production') {
@@ -24,7 +24,7 @@ export function startCronJobs() {
   // Schedule recurring sync
   setInterval(runTradesSync, SYNC_INTERVAL_MS)
 
-  // Resolution sync - starts after 5 minutes, runs every 15 minutes
+  // Resolution sync - starts after 5 minutes, runs every 15 minutes thereafter
   setTimeout(() => {
     runResolutionSync()
     setInterval(runResolutionSync, RESOLUTION_INTERVAL_MS)
@@ -96,7 +96,7 @@ async function runTopTraderTradesSync() {
   try {
     console.log(`[TOP-TRADES] Starting sync...`)
     const result = await syncTopTraderTrades()
-    console.log(`[TOP-TRADES] Done: ${result.fetched} fetched, ${result.upserted} upserted, ${result.skipped} skipped`)
+    console.log(`[TOP-TRADES] Summary: ${result.fetched} BUY trades fetched, ${result.upserted} processed (${result.newPositions} new positions, ${result.updatedPositions} updated), ${result.skipped} skipped`)
   } catch (error) {
     console.error('[TOP-TRADES] Sync failed:', error)
   }

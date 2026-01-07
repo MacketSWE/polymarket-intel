@@ -10,7 +10,6 @@ interface Position {
   side: 'BUY' | 'SELL'
   avg_price: number
   end_date: string | null
-  last_resolution_check: string | null
 }
 
 interface MarketResponse {
@@ -62,15 +61,15 @@ export async function syncTopTraderTradesResolutions(): Promise<{
   errors: number
 }> {
   const now = new Date()
-  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-  // Query unresolved positions with priority logic
+  // Only check positions where market could be resolved:
+  // - end_date is null (unknown, need to fetch from API)
+  // - end_date <= now (market has ended, might be resolved)
   const { data: positions, error } = await supabaseAdmin
     .from('top_trader_trades')
-    .select('id, condition_id, outcome, side, avg_price, end_date, last_resolution_check')
+    .select('id, condition_id, outcome, side, avg_price, end_date')
     .is('resolved_status', null)
-    .or(`end_date.is.null,end_date.lte.${sevenDaysFromNow.toISOString()},last_resolution_check.is.null,last_resolution_check.lte.${sevenDaysAgo.toISOString()}`)
+    .or(`end_date.is.null,end_date.lte.${now.toISOString()}`)
     .limit(500)
 
   if (error) {
@@ -114,21 +113,15 @@ export async function syncTopTraderTradesResolutions(): Promise<{
       checked += conditionPositions.length
 
       if (!status.resolved) {
-        // Market not resolved yet - update last_resolution_check and end_date if available
+        // Market not resolved yet - update end_date if we got it from API
         pending += conditionPositions.length
 
-        const updateData: Record<string, string> = {
-          last_resolution_check: now.toISOString()
-        }
         if (status.endDate) {
-          updateData.end_date = status.endDate
+          await supabaseAdmin
+            .from('top_trader_trades')
+            .update({ end_date: status.endDate })
+            .in('id', conditionPositions.map(p => p.id))
         }
-
-        await supabaseAdmin
-          .from('top_trader_trades')
-          .update(updateData)
-          .in('id', conditionPositions.map(p => p.id))
-
         continue
       }
 
@@ -143,7 +136,6 @@ export async function syncTopTraderTradesResolutions(): Promise<{
           .update({
             resolved_status: resolvedStatus,
             profit_per_dollar: profitPerDollar,
-            last_resolution_check: now.toISOString(),
             end_date: status.endDate || position.end_date
           })
           .eq('id', position.id)

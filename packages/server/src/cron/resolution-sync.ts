@@ -10,7 +10,6 @@ interface Trade {
   side: 'BUY' | 'SELL'
   price: number
   end_date: string | null
-  last_resolution_check: string | null
 }
 
 function calculateProfitPerDollar(side: string, price: number, won: boolean): number | null {
@@ -63,17 +62,15 @@ export async function syncResolutions(): Promise<{
   errors: number
 }> {
   const now = new Date()
-  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-  // Query unresolved trades with priority logic:
-  // Priority 1: end_date <= now + 7 days OR end_date is null
-  // Priority 2: last_resolution_check is null OR older than 7 days
+  // Only check trades where market could be resolved:
+  // - end_date is null (unknown, need to fetch from API)
+  // - end_date <= now (market has ended, might be resolved)
   const { data: trades, error } = await supabaseAdmin
     .from('trades')
-    .select('transaction_hash, condition_id, outcome, side, price, end_date, last_resolution_check')
+    .select('transaction_hash, condition_id, outcome, side, price, end_date')
     .is('resolved_status', null)
-    .or(`end_date.is.null,end_date.lte.${sevenDaysFromNow.toISOString()},last_resolution_check.is.null,last_resolution_check.lte.${sevenDaysAgo.toISOString()}`)
+    .or(`end_date.is.null,end_date.lte.${now.toISOString()}`)
     .limit(500)
 
   if (error) {
@@ -118,22 +115,15 @@ export async function syncResolutions(): Promise<{
       checked += conditionTrades.length
 
       if (!status.resolved) {
-        // Market not resolved yet - update last_resolution_check and end_date if we got it
+        // Market not resolved yet - update end_date if we got it from API
         pending += conditionTrades.length
 
-        const updateData: Record<string, string> = {
-          last_resolution_check: now.toISOString()
-        }
         if (status.endDate) {
-          updateData.end_date = status.endDate
+          await supabaseAdmin
+            .from('trades')
+            .update({ end_date: status.endDate })
+            .in('transaction_hash', conditionTrades.map(t => t.transaction_hash))
         }
-
-        await supabaseAdmin
-          .from('trades')
-          .update(updateData)
-          .in('transaction_hash', conditionTrades.map(t => t.transaction_hash))
-
-        console.log(`[RESOLUTION] Pending: ${conditionId.slice(0, 16)}... - ${conditionTrades.length} trades`)
         continue
       }
 
@@ -148,7 +138,6 @@ export async function syncResolutions(): Promise<{
           .update({
             resolved_status: resolvedStatus,
             profit_per_dollar: profitPerDollar,
-            last_resolution_check: now.toISOString(),
             end_date: status.endDate || trade.end_date
           })
           .eq('transaction_hash', trade.transaction_hash)

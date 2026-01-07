@@ -66,23 +66,25 @@ async function fetchAllTrades(wallets: string[]): Promise<RawTrade[]> {
   return allTrades
 }
 
-export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted: number; skipped: number }> {
+export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted: number; skipped: number; newPositions: number; updatedPositions: number }> {
   // 1. Get wallets from top_pv_traders
   const wallets = await getTopPVWallets()
   if (wallets.length === 0) {
-    return { fetched: 0, upserted: 0, skipped: 0 }
+    console.log(`[TOP-TRADES] No wallets in top_pv_traders table`)
+    return { fetched: 0, upserted: 0, skipped: 0, newPositions: 0, updatedPositions: 0 }
   }
 
-  console.log(`[TOP-TRADES] Fetching trades for ${wallets.length} wallets...`)
+  console.log(`[TOP-TRADES] Fetching trades for ${wallets.length} top traders...`)
 
   // 2. Fetch trades (rate-limited)
   const allTrades = await fetchAllTrades(wallets)
 
   // Only store BUY trades
   const trades = allTrades.filter(t => t.side === 'BUY')
+  console.log(`[TOP-TRADES] Fetched ${allTrades.length} total trades, ${trades.length} BUY trades`)
 
   if (trades.length === 0) {
-    return { fetched: allTrades.length, upserted: 0, skipped: 0 }
+    return { fetched: allTrades.length, upserted: 0, skipped: 0, newPositions: 0, updatedPositions: 0 }
   }
 
   // 3. Filter out already-processed transaction hashes
@@ -106,13 +108,16 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
   const skipped = trades.length - newTrades.length
 
   if (newTrades.length === 0) {
-    return { fetched: trades.length, upserted: 0, skipped }
+    console.log(`[TOP-TRADES] No new trades to process (${skipped} already in DB)`)
+    return { fetched: trades.length, upserted: 0, skipped, newPositions: 0, updatedPositions: 0 }
   }
 
-  console.log(`[TOP-TRADES] Processing ${newTrades.length} new trades (${skipped} already exist)...`)
+  console.log(`[TOP-TRADES] Processing ${newTrades.length} new trades (${skipped} already in DB)...`)
 
   // 4. Upsert each trade
   let upserted = 0
+  let newPositions = 0
+  let updatedPositions = 0
 
   for (const trade of newTrades) {
     try {
@@ -154,6 +159,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
           .eq('id', existingPos.id)
 
         if (error) throw error
+        updatedPositions++
       } else {
         // Insert new position
         const { error } = await supabaseAdmin
@@ -181,6 +187,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
           })
 
         if (error) throw error
+        newPositions++
       }
 
       upserted++
@@ -190,5 +197,5 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
     }
   }
 
-  return { fetched: trades.length, upserted, skipped }
+  return { fetched: trades.length, upserted, skipped, newPositions, updatedPositions }
 }
