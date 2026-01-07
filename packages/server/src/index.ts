@@ -462,6 +462,60 @@ app.get('/api/trades/resolved-stats', requireAuth, async (_req, res) => {
   }
 })
 
+// User trades endpoint - proxies Polymarket Data API
+app.get('/api/polymarket/user/:wallet/trades', requireAuth, async (req, res) => {
+  try {
+    const { wallet } = req.params
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+
+    const params = new URLSearchParams({
+      user: wallet,
+      limit: String(limit),
+      offset: String(offset)
+    })
+
+    const response = await fetch(`https://data-api.polymarket.com/trades?${params}`)
+    if (!response.ok) {
+      throw new Error(`Polymarket API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Leaderboard endpoint - proxies Polymarket Data API
+app.get('/api/polymarket/leaderboard', requireAuth, async (req, res) => {
+  try {
+    const timePeriod = (req.query.timePeriod as string) || 'WEEK'
+    const orderBy = (req.query.orderBy as string) || 'PNL'
+    const category = (req.query.category as string) || 'OVERALL'
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 25
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+
+    const params = new URLSearchParams({
+      timePeriod,
+      orderBy,
+      category,
+      limit: String(limit),
+      offset: String(offset)
+    })
+
+    const response = await fetch(`https://data-api.polymarket.com/v1/leaderboard?${params}`)
+    if (!response.ok) {
+      throw new Error(`Polymarket API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 // Market resolution status endpoint - proxies CLOB API
 app.get('/api/market/status/:conditionId', requireAuth, async (req, res) => {
   try {

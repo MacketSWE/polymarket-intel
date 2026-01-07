@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import New from '../pages/New.vue'
 import Top from '../pages/Top.vue'
 import BigTrades from '../pages/BigTrades.vue'
+import Leaderboard from '../pages/Leaderboard.vue'
 import Login from '../pages/Login.vue'
 
 const router = createRouter({
@@ -27,6 +28,11 @@ const router = createRouter({
       path: '/top',
       name: 'top',
       component: Top
+    },
+    {
+      path: '/leaderboard',
+      name: 'leaderboard',
+      component: Leaderboard
     }
   ]
 })
