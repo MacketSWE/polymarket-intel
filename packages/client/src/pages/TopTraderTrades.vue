@@ -9,6 +9,17 @@ interface Stats {
   totalProfitPerDollar: number
 }
 
+interface TradeBet {
+  id: string
+  trigger_trade_id: string
+  status: 'pending' | 'placed' | 'filled' | 'partial' | 'cancelled' | 'failed'
+  amount: number
+  price: number
+  source: 'manual' | 'auto'
+  created_at: string
+  order_id: string | null
+}
+
 interface TopTraderTrade {
   id: string
   transaction_hash: string
@@ -31,6 +42,7 @@ interface TopTraderTrade {
   resolved_status: 'won' | 'lost' | null
   profit_per_dollar: number | null
   created_at: string
+  bets: TradeBet[]
 }
 
 type FilterType = 'all' | 'pending' | 'resolved' | 'won' | 'lost'
@@ -132,7 +144,9 @@ async function copyBet(trade: TopTraderTrade) {
         outcome: trade.outcome,
         side: trade.side,
         amount: betAmount.value,
-        price: trade.avg_price
+        price: trade.avg_price,
+        triggerTradeId: trade.id,
+        triggerWallet: trade.proxy_wallet
       })
     })
 
@@ -143,6 +157,8 @@ async function copyBet(trade: TopTraderTrade) {
         success: true,
         message: `Bet placed! Order: ${data.data.orderId?.slice(0, 8)}...`
       })
+      // Refresh to show the new bet
+      fetchTrades()
     } else {
       betResults.value.set(trade.id, {
         success: false,
@@ -308,6 +324,18 @@ onMounted(() => {
               {{ formatDate(trade.created_at) }}
             </td>
             <td class="action-cell">
+              <!-- Show existing bets -->
+              <div v-if="trade.bets && trade.bets.length > 0" class="bet-indicators">
+                <span
+                  v-for="bet in trade.bets"
+                  :key="bet.id"
+                  :class="['bet-indicator', bet.status, bet.source]"
+                  :title="`${bet.source.toUpperCase()} $${bet.amount} @ ${(bet.price * 100).toFixed(0)}c - ${bet.status}`"
+                >
+                  {{ bet.source === 'auto' ? 'A' : 'M' }}
+                </span>
+              </div>
+              <!-- Copy button for pending trades without bets -->
               <template v-if="!trade.resolved_status">
                 <button
                   v-if="!betResults.get(trade.id)"
@@ -325,7 +353,7 @@ onMounted(() => {
                   {{ betResults.get(trade.id)?.success ? '✓' : '✗ ' + betResults.get(trade.id)?.message }}
                 </span>
               </template>
-              <span v-else class="resolved-dash">-</span>
+              <span v-else-if="!trade.bets || trade.bets.length === 0" class="resolved-dash">-</span>
             </td>
           </tr>
         </tbody>
@@ -709,5 +737,47 @@ onMounted(() => {
 
 .resolved-dash {
   color: var(--text-muted);
+}
+
+.bet-indicators {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.bet-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+}
+
+.bet-indicator.auto {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+}
+
+.bet-indicator.manual {
+  background: rgba(156, 163, 175, 0.2);
+  color: #9ca3af;
+}
+
+.bet-indicator.placed,
+.bet-indicator.filled {
+  border: 2px solid #22c55e;
+}
+
+.bet-indicator.failed {
+  border: 2px solid #ef4444;
+}
+
+.bet-indicator.pending {
+  border: 2px solid #eab308;
 }
 </style>
