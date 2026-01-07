@@ -58,16 +58,15 @@ export async function syncResolutions(): Promise<{
   const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-  // Query unresolved take_bets with priority logic:
+  // Query unresolved trades with priority logic:
   // Priority 1: end_date <= now + 7 days OR end_date is null
   // Priority 2: last_resolution_check is null OR older than 7 days
   const { data: trades, error } = await supabaseAdmin
     .from('trades')
     .select('transaction_hash, condition_id, outcome, end_date, last_resolution_check')
-    .eq('take_bet', true)
     .is('resolved_status', null)
     .or(`end_date.is.null,end_date.lte.${sevenDaysFromNow.toISOString()},last_resolution_check.is.null,last_resolution_check.lte.${sevenDaysAgo.toISOString()}`)
-    .limit(200)
+    .limit(500)
 
   if (error) {
     console.error('Failed to fetch trades:', error)
@@ -75,7 +74,7 @@ export async function syncResolutions(): Promise<{
   }
 
   const tradesList = (trades || []) as Trade[]
-  console.log(`Found ${tradesList.length} unresolved take bets to check`)
+  console.log(`Found ${tradesList.length} unresolved trades to check`)
 
   if (tradesList.length === 0) {
     return { checked: 0, resolved: 0, won: 0, lost: 0, pending: 0, errors: 0 }

@@ -2,7 +2,7 @@ import { syncTrades } from './trades-sync.js'
 import { syncResolutions } from './resolution-sync.js'
 
 const SYNC_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
-const RESOLUTION_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
+const RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 
 export function startCronJobs() {
   if (process.env.NODE_ENV !== 'production') {
