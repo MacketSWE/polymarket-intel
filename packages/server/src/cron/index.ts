@@ -2,11 +2,13 @@ import { syncTrades } from './trades-sync.js'
 import { syncResolutions } from './resolution-sync.js'
 import { syncTopPVTraders, isTableEmpty } from './top-pv-sync.js'
 import { syncTopTraderTrades } from './top-trader-trades-sync.js'
+import { syncTopTraderTradesResolutions } from './top-trader-trades-resolution-sync.js'
 
 const SYNC_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const TOP_PV_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const TOP_TRADER_TRADES_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const TOP_TRADER_TRADES_RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 
 export function startCronJobs() {
   if (process.env.NODE_ENV !== 'production') {
@@ -37,6 +39,12 @@ export function startCronJobs() {
     runTopTraderTradesSync()
     setInterval(runTopTraderTradesSync, TOP_TRADER_TRADES_INTERVAL_MS)
   }, 2 * 60 * 1000)
+
+  // Top trader trades resolution sync - starts after 3 minutes, runs every 5 minutes
+  setTimeout(() => {
+    runTopTraderTradesResolutionSync()
+    setInterval(runTopTraderTradesResolutionSync, TOP_TRADER_TRADES_RESOLUTION_INTERVAL_MS)
+  }, 3 * 60 * 1000)
 }
 
 async function runTradesSync() {
@@ -91,5 +99,15 @@ async function runTopTraderTradesSync() {
     console.log(`Done: ${result.fetched} fetched, ${result.upserted} upserted, ${result.skipped} skipped`)
   } catch (error) {
     console.error('Top trader trades sync failed:', error)
+  }
+}
+
+async function runTopTraderTradesResolutionSync() {
+  try {
+    console.log(`[${new Date().toISOString()}] Syncing top trader trades resolutions...`)
+    const result = await syncTopTraderTradesResolutions()
+    console.log(`Done: ${result.checked} checked, ${result.resolved} resolved (${result.won}W/${result.lost}L), ${result.pending} pending`)
+  } catch (error) {
+    console.error('Top trader trades resolution sync failed:', error)
   }
 }
