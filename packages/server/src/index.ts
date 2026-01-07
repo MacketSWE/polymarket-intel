@@ -451,6 +451,17 @@ app.post('/api/trades/cleanup-duplicates', requireAuth, async (req, res) => {
   }
 })
 
+// Resolved trades stats (P/L summary)
+app.get('/api/trades/resolved-stats', requireAuth, async (_req, res) => {
+  try {
+    const { getResolvedStats } = await import('./db/functions/get_resolved_stats/index.js')
+    const stats = await getResolvedStats()
+    res.json({ success: true, data: stats })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 // Market resolution status endpoint - proxies CLOB API
 app.get('/api/market/status/:conditionId', requireAuth, async (req, res) => {
   try {

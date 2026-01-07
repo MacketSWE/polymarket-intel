@@ -63,20 +63,22 @@ npx tsx packages/server/src/scripts/<script-name>.ts [args]
 
 ### Database
 
-Uses Supabase (PostgreSQL).
+Uses Supabase (PostgreSQL). All DB-related code lives in `src/db/`.
 
-**Table Structure** (`src/tables/`):
+**Table Structure** (`src/db/tables/`):
 ```
-tables/
+db/tables/
   <table_name>/
     type.ts       # TypeScript interface (camelCase fields)
     schema.sql    # CREATE TABLE + indexes + RLS policies
 ```
 
-**DB Functions** (`src/functions/`):
+**DB Functions** (`src/db/functions/`):
 ```
-functions/
-  <function_name>.sql   # One file per function
+db/functions/
+  <function_name>/
+    function.sql  # CREATE FUNCTION SQL
+    index.ts      # Typed wrapper (camelCase return)
 ```
 
 **trades table** - Core table storing:
