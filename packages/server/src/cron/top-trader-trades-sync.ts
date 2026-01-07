@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../services/supabase.js'
 const DATA_API = 'https://data-api.polymarket.com'
 const BATCH_SIZE = 5
 const DELAY_MS = 200
-const TRADES_PER_WALLET = 100
+const TRADES_PER_WALLET = 50
 
 interface RawTrade {
   transactionHash: string
