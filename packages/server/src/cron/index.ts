@@ -1,10 +1,12 @@
 import { syncTrades } from './trades-sync.js'
 import { syncResolutions } from './resolution-sync.js'
 import { syncTopPVTraders, isTableEmpty } from './top-pv-sync.js'
+import { syncTopTraderTrades } from './top-trader-trades-sync.js'
 
 const SYNC_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 const RESOLUTION_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const TOP_PV_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const TOP_TRADER_TRADES_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 
 export function startCronJobs() {
   if (process.env.NODE_ENV !== 'production') {
@@ -29,6 +31,12 @@ export function startCronJobs() {
   // Top P/V sync - check if empty and populate immediately, then daily
   runTopPVSyncIfEmpty()
   setInterval(runTopPVSync, TOP_PV_INTERVAL_MS)
+
+  // Top trader trades sync - starts after 2 minutes, runs every 5 minutes
+  setTimeout(() => {
+    runTopTraderTradesSync()
+    setInterval(runTopTraderTradesSync, TOP_TRADER_TRADES_INTERVAL_MS)
+  }, 2 * 60 * 1000)
 }
 
 async function runTradesSync() {
@@ -73,5 +81,15 @@ async function runTopPVSync() {
     console.log(`Done: ${result.count} top P/V traders updated`)
   } catch (error) {
     console.error('Top P/V sync failed:', error)
+  }
+}
+
+async function runTopTraderTradesSync() {
+  try {
+    console.log(`[${new Date().toISOString()}] Syncing top trader trades...`)
+    const result = await syncTopTraderTrades()
+    console.log(`Done: ${result.fetched} fetched, ${result.upserted} upserted, ${result.skipped} skipped`)
+  } catch (error) {
+    console.error('Top trader trades sync failed:', error)
   }
 }
