@@ -377,10 +377,18 @@ app.get('/api/trades/large', requireAuth, async (req, res) => {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 100
     const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
     const maxPrice = req.query.max_price ? parseFloat(req.query.max_price as string) : 0.9
+    const filter = req.query.filter as string | undefined
 
     let query = supabaseAdmin
       .from('trades')
       .select('*')
+
+    // Apply filter
+    if (filter === 'take') {
+      query = query.eq('take_bet', true)
+    } else if (filter === 'resolved') {
+      query = query.not('resolved_status', 'is', null)
+    }
 
     // Filter out high probability trades by default (price > 90 cents)
     if (maxPrice < 1) {

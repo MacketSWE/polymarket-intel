@@ -17,8 +17,18 @@ interface DbTrade {
   outcome: string
   name: string
   pseudonym: string
+  // Classification
+  good_trader: boolean | null
   follow_score: number | null
+  insider_score: number | null
+  bot_score: number | null
+  whale_score: number | null
+  classification: string | null
   take_bet: boolean | null
+  // Resolution
+  resolved_status: 'won' | 'lost' | null
+  end_date: string | null
+  last_resolution_check: string | null
 }
 
 interface Activity {
@@ -87,6 +97,7 @@ const sortKey = ref<string>('timestamp')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const hasMore = ref(true)
 const PAGE_SIZE = 500
+const activeFilter = ref<'all' | 'take' | 'resolved'>('all')
 
 // Trader analysis state
 const traderLoading = ref(false)
@@ -114,6 +125,16 @@ const sortedTrades = computed(() => {
       const aScore = a.follow_score ?? -1
       const bScore = b.follow_score ?? -1
       return (bScore - aScore) * (sortDir.value === 'asc' ? -1 : 1)
+    } else if (sortKey.value === 'resolved_status') {
+      // Sort order: won > lost > null
+      const statusOrder = { won: 2, lost: 1, null: 0 }
+      const aOrder = statusOrder[a.resolved_status ?? 'null']
+      const bOrder = statusOrder[b.resolved_status ?? 'null']
+      return (bOrder - aOrder) * (sortDir.value === 'asc' ? -1 : 1)
+    } else if (sortKey.value === 'end_date') {
+      const aDate = a.end_date ? new Date(a.end_date).getTime() : Infinity
+      const bDate = b.end_date ? new Date(b.end_date).getTime() : Infinity
+      return (aDate - bDate) * (sortDir.value === 'asc' ? 1 : -1)
     } else if (sortKey.value === 'title') {
       return a.title.localeCompare(b.title) * dir
     }
@@ -170,6 +191,28 @@ function timeAgo(timestamp: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
   return `${Math.floor(seconds / 86400)}d ago`
+}
+
+function formatEndDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = date.getTime() - now.getTime()
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays < 0) return 'Ended'
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Tomorrow'
+  if (diffDays <= 7) return `${diffDays}d`
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function isEndingSoon(dateStr: string): boolean {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = date.getTime() - now.getTime()
+  const diffDays = diffMs / (1000 * 60 * 60 * 24)
+  return diffDays >= 0 && diffDays <= 7
 }
 
 function getMarketUrl(slug: string) {
@@ -258,7 +301,8 @@ async function fetchTrades(append = false) {
 
   try {
     const offset = append ? trades.value.length : 0
-    const response = await fetch(`/api/trades/large?limit=${PAGE_SIZE}&offset=${offset}`)
+    const filterParam = activeFilter.value !== 'all' ? `&filter=${activeFilter.value}` : ''
+    const response = await fetch(`/api/trades/large?limit=${PAGE_SIZE}&offset=${offset}${filterParam}`)
     const data = await response.json()
 
     if (data.success) {
@@ -286,6 +330,13 @@ function loadMore() {
   }
 }
 
+function setFilter(filter: 'all' | 'take' | 'resolved') {
+  if (activeFilter.value !== filter) {
+    activeFilter.value = filter
+    fetchTrades(false)
+  }
+}
+
 onMounted(() => {
   fetchTrades()
 })
@@ -295,7 +346,23 @@ onMounted(() => {
   <PageLayout title="Trades">
     <template #subnav>
       <span class="big-badge">BIG</span>
-      <span class="info-text">Trades >= $2,500 from our database</span>
+      <div class="filter-group">
+        <button
+          @click="setFilter('all')"
+          :class="['filter-btn', { active: activeFilter === 'all' }]"
+          :disabled="loading"
+        >All</button>
+        <button
+          @click="setFilter('take')"
+          :class="['filter-btn', { active: activeFilter === 'take' }]"
+          :disabled="loading"
+        >Takes</button>
+        <button
+          @click="setFilter('resolved')"
+          :class="['filter-btn', { active: activeFilter === 'resolved' }]"
+          :disabled="loading"
+        >Resolved</button>
+      </div>
       <span class="subnav-spacer"></span>
       <button @click="fetchTrades(false)" :disabled="loading" class="btn btn-sm">
         {{ loading ? 'Loading...' : 'Refresh' }}
@@ -332,6 +399,12 @@ onMounted(() => {
                   <span class="th-content">Follow <span class="sort-icon">{{ sortKey === 'follow_score' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
                 <th class="th-static">Take</th>
+                <th class="th-sortable" :class="{ sorted: sortKey === 'resolved_status' }" @click="toggleSort('resolved_status')">
+                  <span class="th-content">Result <span class="sort-icon">{{ sortKey === 'resolved_status' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
+                </th>
+                <th class="th-sortable" :class="{ sorted: sortKey === 'end_date' }" @click="toggleSort('end_date')">
+                  <span class="th-content">Ends <span class="sort-icon">{{ sortKey === 'end_date' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
+                </th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'title' }" @click="toggleSort('title')">
                   <span class="th-content">Market <span class="sort-icon">{{ sortKey === 'title' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
@@ -360,6 +433,15 @@ onMounted(() => {
                 </td>
                 <td class="take-cell">
                   <span v-if="trade.take_bet" class="take-badge">TAKE</span>
+                </td>
+                <td class="result-cell">
+                  <span v-if="trade.resolved_status === 'won'" class="result-badge won">WON</span>
+                  <span v-else-if="trade.resolved_status === 'lost'" class="result-badge lost">LOST</span>
+                  <span v-else class="no-data">-</span>
+                </td>
+                <td class="end-date">
+                  <span v-if="trade.end_date" :class="{ 'ending-soon': isEndingSoon(trade.end_date) }">{{ formatEndDate(trade.end_date) }}</span>
+                  <span v-else class="no-data">-</span>
                 </td>
                 <td class="title-cell">{{ trade.title }}</td>
                 <td class="outcome">{{ trade.outcome }}</td>
@@ -411,6 +493,20 @@ onMounted(() => {
             <div class="detail-row">
               <span class="detail-label">Outcome</span>
               <span class="detail-value">{{ selectedTrade.outcome }}</span>
+            </div>
+
+            <div class="detail-row">
+              <span class="detail-label">Result</span>
+              <span v-if="selectedTrade.resolved_status === 'won'" class="result-badge won">WON</span>
+              <span v-else-if="selectedTrade.resolved_status === 'lost'" class="result-badge lost">LOST</span>
+              <span v-else class="detail-value">Pending</span>
+            </div>
+
+            <div class="detail-row" v-if="selectedTrade.end_date">
+              <span class="detail-label">Ends</span>
+              <span class="detail-value" :class="{ 'ending-soon': isEndingSoon(selectedTrade.end_date) }">
+                {{ new Date(selectedTrade.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}
+              </span>
             </div>
 
             <div class="detail-section">
@@ -611,6 +707,41 @@ onMounted(() => {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   letter-spacing: 1px;
+}
+
+.filter-group {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  padding: 2px;
+  border-radius: var(--radius-md);
+}
+
+.filter-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.filter-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.filter-btn.active {
+  background: var(--accent-primary);
+  color: var(--accent-primary-text);
+}
+
+.filter-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .info-text {
@@ -846,6 +977,42 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.result-cell {
+  width: 60px;
+  text-align: center;
+}
+
+.result-badge {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.result-badge.won {
+  background: linear-gradient(135deg, #4caf50, #2e7d32);
+  color: white;
+}
+
+.result-badge.lost {
+  background: linear-gradient(135deg, #e53935, #c62828);
+  color: white;
+}
+
+.end-date {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+  width: 80px;
+}
+
+.ending-soon {
+  color: #ff9800 !important;
+  font-weight: 600;
 }
 
 .trade-row.take-bet {

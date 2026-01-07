@@ -20,6 +20,11 @@ const router = createRouter({
     },
     {
       path: '/',
+      name: 'home',
+      component: BigTrades
+    },
+    {
+      path: '/dashboard',
       name: 'dashboard',
       component: Dashboard
     },
