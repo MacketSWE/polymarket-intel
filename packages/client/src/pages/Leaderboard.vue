@@ -28,12 +28,20 @@ interface Trade {
 
 type TimePeriod = 'DAY' | 'WEEK' | 'MONTH' | 'ALL'
 type OrderBy = 'PNL' | 'VOL'
+type ViewMode = 'standard' | 'topPV'
+
+interface TopPVTrader extends Trader {
+  pv: number
+  source: '7d' | '30d' | 'both'
+}
 
 const loading = ref(true)
 const traders = ref<Trader[]>([])
+const topPVTraders = ref<TopPVTrader[]>([])
 const error = ref('')
 const timePeriod = ref<TimePeriod>('WEEK')
 const orderBy = ref<OrderBy>('PNL')
+const viewMode = ref<ViewMode>('standard')
 
 const selectedTrader = ref<Trader | null>(null)
 const traderTrades = ref<Trade[]>([])
@@ -160,6 +168,70 @@ async function fetchLeaderboard() {
   loading.value = false
 }
 
+async function fetchTopPVTraders() {
+  loading.value = true
+  error.value = ''
+
+  try {
+    // Fetch both 7d and 30d leaderboards in parallel
+    const [weekRes, monthRes] = await Promise.all([
+      fetch('/api/polymarket/leaderboard?timePeriod=WEEK&orderBy=PNL&limit=50'),
+      fetch('/api/polymarket/leaderboard?timePeriod=MONTH&orderBy=PNL&limit=50')
+    ])
+
+    const [weekData, monthData] = await Promise.all([weekRes.json(), monthRes.json()])
+
+    if (!weekData.success || !monthData.success) {
+      error.value = 'Failed to fetch leaderboard data'
+      loading.value = false
+      return
+    }
+
+    // Calculate P/V and get top 15 from each period
+    const calcPV = (t: Trader) => t.vol > 0 ? t.pnl / t.vol : 0
+
+    const weekTraders: TopPVTrader[] = (weekData.data as Trader[])
+      .filter(t => t.vol > 0 && t.pnl > 0)
+      .map(t => ({ ...t, pv: calcPV(t), source: '7d' as const }))
+      .sort((a, b) => b.pv - a.pv)
+      .slice(0, 15)
+
+    const monthTraders: TopPVTrader[] = (monthData.data as Trader[])
+      .filter(t => t.vol > 0 && t.pnl > 0)
+      .map(t => ({ ...t, pv: calcPV(t), source: '30d' as const }))
+      .sort((a, b) => b.pv - a.pv)
+      .slice(0, 15)
+
+    // Combine and deduplicate - keep the one with higher P/V, mark as 'both' if in both
+    const combined = new Map<string, TopPVTrader>()
+
+    for (const t of weekTraders) {
+      combined.set(t.proxyWallet, t)
+    }
+
+    for (const t of monthTraders) {
+      if (combined.has(t.proxyWallet)) {
+        const existing = combined.get(t.proxyWallet)!
+        existing.source = 'both'
+        // Keep the higher P/V
+        if (t.pv > existing.pv) {
+          combined.set(t.proxyWallet, { ...t, source: 'both' })
+        }
+      } else {
+        combined.set(t.proxyWallet, t)
+      }
+    }
+
+    // Sort by P/V descending
+    topPVTraders.value = Array.from(combined.values()).sort((a, b) => b.pv - a.pv)
+  } catch (e) {
+    error.value = 'Failed to fetch leaderboard'
+    console.error(e)
+  }
+
+  loading.value = false
+}
+
 async function fetchTraderTrades(wallet: string) {
   tradesLoading.value = true
   traderTrades.value = []
@@ -196,8 +268,19 @@ function setOrderBy(order: OrderBy) {
   orderBy.value = order
 }
 
+function setViewMode(mode: ViewMode) {
+  viewMode.value = mode
+  if (mode === 'topPV') {
+    fetchTopPVTraders()
+  } else {
+    fetchLeaderboard()
+  }
+}
+
 watch([timePeriod, orderBy], () => {
-  fetchLeaderboard()
+  if (viewMode.value === 'standard') {
+    fetchLeaderboard()
+  }
 })
 
 onMounted(() => {
@@ -209,37 +292,58 @@ onMounted(() => {
   <PageLayout title="Leaderboard">
     <template #subnav>
       <button
-        v-for="period in (['DAY', 'WEEK', 'MONTH', 'ALL'] as TimePeriod[])"
-        :key="period"
-        @click="setPeriod(period)"
-        :class="['subnav-btn', { active: timePeriod === period }]"
+        @click="setViewMode('standard')"
+        :class="['subnav-btn', { active: viewMode === 'standard' }]"
       >
-        {{ periodLabels[period] }}
-      </button>
-      <span class="subnav-spacer"></span>
-      <button
-        @click="setOrderBy('PNL')"
-        :class="['subnav-btn', { active: orderBy === 'PNL' }]"
-      >
-        By Profit
+        Standard
       </button>
       <button
-        @click="setOrderBy('VOL')"
-        :class="['subnav-btn', { active: orderBy === 'VOL' }]"
+        @click="setViewMode('topPV')"
+        :class="['subnav-btn', { active: viewMode === 'topPV' }]"
       >
-        By Volume
+        Top P/V
       </button>
-      <button @click="fetchLeaderboard" :disabled="loading" class="btn btn-sm">
-        {{ loading ? 'Loading...' : 'Refresh' }}
-      </button>
+      <span class="subnav-divider"></span>
+      <template v-if="viewMode === 'standard'">
+        <button
+          v-for="period in (['DAY', 'WEEK', 'MONTH', 'ALL'] as TimePeriod[])"
+          :key="period"
+          @click="setPeriod(period)"
+          :class="['subnav-btn', { active: timePeriod === period }]"
+        >
+          {{ periodLabels[period] }}
+        </button>
+        <span class="subnav-spacer"></span>
+        <button
+          @click="setOrderBy('PNL')"
+          :class="['subnav-btn', { active: orderBy === 'PNL' }]"
+        >
+          By Profit
+        </button>
+        <button
+          @click="setOrderBy('VOL')"
+          :class="['subnav-btn', { active: orderBy === 'VOL' }]"
+        >
+          By Volume
+        </button>
+        <button @click="fetchLeaderboard" :disabled="loading" class="btn btn-sm">
+          {{ loading ? 'Loading...' : 'Refresh' }}
+        </button>
+      </template>
+      <template v-else>
+        <span class="subnav-spacer"></span>
+        <button @click="fetchTopPVTraders" :disabled="loading" class="btn btn-sm">
+          {{ loading ? 'Loading...' : 'Refresh' }}
+        </button>
+      </template>
     </template>
 
     <div v-if="loading" class="loading">Loading leaderboard...</div>
     <div v-else-if="error" class="error">{{ error }}</div>
 
     <div v-else class="content-layout">
-      <!-- Leaderboard Table -->
-      <div class="leaderboard-container">
+      <!-- Standard Leaderboard Table -->
+      <div v-if="viewMode === 'standard'" class="leaderboard-container">
         <div class="table-header">
           <span class="subtitle">Top {{ traders.length }} traders by {{ orderBy === 'PNL' ? 'profit' : 'volume' }} ({{ periodLabels[timePeriod] }})</span>
         </div>
@@ -251,6 +355,7 @@ onMounted(() => {
                 <th>Trader</th>
                 <th class="th-right">Profit</th>
                 <th class="th-right">Volume</th>
+                <th class="th-right">P/V</th>
               </tr>
             </thead>
             <tbody>
@@ -283,6 +388,64 @@ onMounted(() => {
                   {{ trader.pnl >= 0 ? '+' : '' }}{{ formatUSD(trader.pnl) }}
                 </td>
                 <td class="volume">{{ formatUSD(trader.vol) }}</td>
+                <td :class="['pv', trader.pnl >= 0 ? 'positive' : 'negative']">
+                  {{ trader.vol > 0 ? ((trader.pnl / trader.vol) * 100).toFixed(1) + '%' : '-' }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Top P/V Leaderboard Table -->
+      <div v-else class="leaderboard-container">
+        <div class="table-header">
+          <span class="subtitle">Top {{ topPVTraders.length }} traders by P/V (7d + 30d combined)</span>
+        </div>
+        <div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="th-static">#</th>
+                <th>Trader</th>
+                <th class="th-right">P/V</th>
+                <th class="th-right">Profit</th>
+                <th class="th-right">Volume</th>
+                <th class="th-static">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(trader, index) in topPVTraders"
+                :key="trader.proxyWallet"
+                :class="['trader-row', { selected: selectedTrader?.proxyWallet === trader.proxyWallet }]"
+                @click="selectTrader(trader)"
+              >
+                <td class="row-num">{{ index + 1 }}</td>
+                <td class="trader-cell">
+                  <div class="trader-info">
+                    <img
+                      v-if="trader.profileImage"
+                      :src="trader.profileImage"
+                      class="avatar"
+                      alt=""
+                    />
+                    <div v-else class="avatar-placeholder"></div>
+                    <div class="trader-details">
+                      <span class="trader-name-text">
+                        {{ trader.userName || truncateWallet(trader.proxyWallet) }}
+                        <span v-if="trader.verifiedBadge" class="verified">✓</span>
+                      </span>
+                      <span v-if="trader.xUsername" class="twitter">@{{ trader.xUsername }}</span>
+                    </div>
+                  </div>
+                </td>
+                <td class="pv positive">{{ (trader.pv * 100).toFixed(1) }}%</td>
+                <td class="pnl positive">+{{ formatUSD(trader.pnl) }}</td>
+                <td class="volume">{{ formatUSD(trader.vol) }}</td>
+                <td class="source-cell">
+                  <span :class="['source-badge', trader.source]">{{ trader.source }}</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -375,6 +538,13 @@ onMounted(() => {
 
 .subnav-spacer {
   flex: 1;
+}
+
+.subnav-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-primary);
+  margin: 0 var(--spacing-sm);
 }
 
 .btn {
@@ -559,6 +729,47 @@ onMounted(() => {
   color: var(--text-muted);
   font-family: monospace;
   text-align: right;
+}
+
+.pv {
+  font-family: monospace;
+  font-weight: 600;
+  text-align: right;
+  font-size: var(--font-sm);
+}
+
+.pv.positive {
+  color: var(--accent-green);
+}
+
+.pv.negative {
+  color: var(--accent-red);
+}
+
+.source-cell {
+  text-align: center;
+}
+
+.source-badge {
+  font-size: var(--font-xs);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+.source-badge.7d {
+  background: var(--bg-active);
+  color: var(--text-muted);
+}
+
+.source-badge.30d {
+  background: var(--bg-active);
+  color: var(--text-muted);
+}
+
+.source-badge.both {
+  background: var(--accent-primary);
+  color: var(--accent-primary-text);
 }
 
 /* Detail Panel */
