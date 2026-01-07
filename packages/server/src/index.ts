@@ -494,12 +494,35 @@ app.get('/api/top-trader-trades', requireAuth, async (req, res) => {
       query = query.is('resolved_status', null)
     }
 
-    const { data, error } = await query
+    const { data: trades, error } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
     if (error) throw error
-    res.json({ success: true, data })
+
+    // Fetch linked bets from bet_log
+    const tradeIds = (trades || []).map(t => t.id)
+    const { data: bets } = await supabaseAdmin
+      .from('bet_log')
+      .select('trigger_trade_id, id, status, amount, price, source, created_at, order_id')
+      .in('trigger_trade_id', tradeIds)
+
+    // Create a map of trade_id -> bets
+    const betsByTradeId = new Map<string, typeof bets>()
+    for (const bet of bets || []) {
+      if (!bet.trigger_trade_id) continue
+      const existing = betsByTradeId.get(bet.trigger_trade_id) || []
+      existing.push(bet)
+      betsByTradeId.set(bet.trigger_trade_id, existing)
+    }
+
+    // Merge bets into trades
+    const tradesWithBets = (trades || []).map(trade => ({
+      ...trade,
+      bets: betsByTradeId.get(trade.id) || []
+    }))
+
+    res.json({ success: true, data: tradesWithBets })
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message })
   }
@@ -635,8 +658,8 @@ app.get('/api/betting/status', requireAuth, async (_req, res) => {
 // Place a bet
 app.post('/api/betting/bet', requireAuth, async (req, res) => {
   try {
-    const { placeBet } = await import('./services/betting.js')
-    const { marketSlug, outcome, side, amount, price, orderType } = req.body
+    const { placeBet, saveBetLog } = await import('./services/betting.js')
+    const { marketSlug, outcome, side, amount, price, orderType, triggerTradeId, triggerWallet } = req.body
 
     // Validation
     if (!marketSlug || !outcome || !amount || !price) {
@@ -667,6 +690,21 @@ app.post('/api/betting/bet', requireAuth, async (req, res) => {
       amount,
       price,
       orderType: orderType || 'GTC'
+    })
+
+    // Save to bet_log
+    await saveBetLog({
+      orderId: result.orderId,
+      marketSlug,
+      outcome,
+      side: side || 'BUY',
+      amount,
+      price,
+      status: result.success ? 'placed' : 'failed',
+      errorMessage: result.error,
+      source: 'manual',
+      triggerTradeId: triggerTradeId || undefined,
+      triggerWallet: triggerWallet || undefined
     })
 
     if (!result.success) {
@@ -744,6 +782,26 @@ app.get('/api/betting/market/:slug', requireAuth, async (req, res) => {
     }
 
     res.json({ success: true, data: info })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get current API credentials (for updating .env)
+app.get('/api/betting/credentials', requireAuth, async (_req, res) => {
+  try {
+    const { getCurrentCredentials } = await import('./services/betting.js')
+    const creds = getCurrentCredentials()
+
+    if (!creds) {
+      return res.status(404).json({ success: false, error: 'No credentials cached. Place a bet first to derive credentials.' })
+    }
+
+    res.json({
+      success: true,
+      data: creds,
+      envFormat: `POLYMARKET_API_KEY=${creds.apiKey}\nPOLYMARKET_API_SECRET=${creds.apiSecret}\nPOLYMARKET_PASSPHRASE=${creds.passphrase}`
+    })
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message })
   }

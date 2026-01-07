@@ -2,6 +2,7 @@ import { Wallet } from '@ethersproject/wallet'
 import { ClobClient } from '@polymarket/clob-client'
 import { Side, OrderType, AssetType } from '@polymarket/clob-client'
 import type { ApiKeyCreds } from '@polymarket/clob-client'
+import { BuilderConfig } from '@polymarket/builder-signing-sdk'
 import type { BetParams, BetResult, OpenOrder, Balances, ApiCredentials, MarketInfo } from './betting.types.js'
 import type { BetLog } from '../db/tables/bet_log/type.js'
 import { supabaseAdmin } from './supabase.js'
@@ -15,6 +16,7 @@ const PRIVATE_KEY_PART2 = '91d067cc47945655f7d9f5614ec'
 
 let clobClient: ClobClient | null = null
 let cachedCreds: ApiKeyCreds | null = null
+let credentialsRetried = false // Track if we've already retried with fresh creds
 
 interface GammaMarket {
   conditionId: string
@@ -49,10 +51,15 @@ function getBettingConfig() {
   const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS
   const signatureType = parseInt(process.env.POLYMARKET_SIGNATURE_TYPE || '0') as 0 | 1 | 2
 
-  // API credentials from .env (already derived)
+  // Trading API credentials (derived from wallet)
   const apiKey = process.env.POLYMARKET_API_KEY
   const apiSecret = process.env.POLYMARKET_API_SECRET
   const passphrase = process.env.POLYMARKET_PASSPHRASE
+
+  // Builder API credentials (from polymarket.com/settings?tab=builder)
+  const builderApiKey = process.env.BUILDER_API_KEY
+  const builderApiSecret = process.env.BUILDER_API_SECRET
+  const builderPassphrase = process.env.BUILDER_PASSPHRASE
 
   if (!privateKeyPart1 || !PRIVATE_KEY_PART2) {
     throw new Error('POLYGON_PRIVATE_KEY_PART1 not set or PRIVATE_KEY_PART2 not configured')
@@ -60,12 +67,17 @@ function getBettingConfig() {
 
   const privateKey = privateKeyPart1 + PRIVATE_KEY_PART2
 
-  // Build API creds object if all values present
+  // Build trading API creds object if all values present
   const apiCreds = apiKey && apiSecret && passphrase
     ? { key: apiKey, secret: apiSecret, passphrase }
     : null
 
-  return { privateKey, rpcUrl, funderAddress, signatureType, apiCreds }
+  // Build builder creds object if all values present
+  const builderCreds = builderApiKey && builderApiSecret && builderPassphrase
+    ? { key: builderApiKey, secret: builderApiSecret, passphrase: builderPassphrase }
+    : null
+
+  return { privateKey, rpcUrl, funderAddress, signatureType, apiCreds, builderCreds }
 }
 
 /**
@@ -74,33 +86,106 @@ function getBettingConfig() {
 export async function initializeClobClient(): Promise<ClobClient> {
   if (clobClient) return clobClient
 
-  const { privateKey, funderAddress, signatureType, apiCreds } = getBettingConfig()
+  const { privateKey, funderAddress, signatureType, apiCreds, builderCreds } = getBettingConfig()
   const wallet = new Wallet(privateKey)
+
+  console.log(`[CLOB] Wallet address: ${wallet.address}`)
+  console.log(`[CLOB] Funder address: ${funderAddress || 'not set'}`)
+  console.log(`[CLOB] Signature type: ${signatureType}`)
 
   // Use existing API credentials from .env, or derive new ones
   if (!cachedCreds) {
     if (apiCreds) {
       cachedCreds = apiCreds
-      console.log('Using API credentials from .env')
+      console.log(`[CLOB] Using trading API credentials from .env (key prefix: ${apiCreds.key?.slice(0, 8)}...)`)
     } else {
+      console.log('[CLOB] No trading API credentials in .env, deriving new ones...')
       const tempClient = new ClobClient(CLOB_HOST, CHAIN_ID, wallet)
       cachedCreds = await tempClient.createOrDeriveApiKey()
-      console.log('Derived new API credentials')
+      console.log(`[CLOB] Derived new trading API credentials (key prefix: ${cachedCreds.key?.slice(0, 8)}...)`)
     }
   }
 
+  // Create BuilderConfig if builder credentials are available
+  let builderConfig: BuilderConfig | undefined
+  if (builderCreds) {
+    builderConfig = new BuilderConfig({
+      localBuilderCreds: builderCreds
+    })
+    console.log(`[CLOB] Builder attribution enabled (key prefix: ${builderCreds.key?.slice(0, 8)}...)`)
+  } else {
+    console.log('[CLOB] No builder credentials - orders will not be attributed')
+  }
+
   // Create full client with credentials
+  // Constructor: host, chainId, signer, creds, signatureType, funderAddress, geoBlockToken, useServerTime, builderConfig
   clobClient = new ClobClient(
     CLOB_HOST,
     CHAIN_ID,
     wallet,
     cachedCreds,
     signatureType,
-    funderAddress
+    funderAddress,
+    undefined, // geoBlockToken
+    undefined, // useServerTime
+    builderConfig
   )
 
-  console.log('CLOB client initialized')
+  console.log('[CLOB] Client initialized successfully')
   return clobClient
+}
+
+/**
+ * Reset cached credentials and client (forces re-initialization)
+ */
+export function resetClobClient(): void {
+  clobClient = null
+  cachedCreds = null
+  credentialsRetried = false
+  console.log('[CLOB] Client and credentials reset')
+}
+
+/**
+ * Force re-derive API credentials (ignores cached/env creds)
+ */
+export async function forceRederiveCredentials(): Promise<ApiCredentials> {
+  const { privateKey, funderAddress, signatureType, builderCreds } = getBettingConfig()
+  const wallet = new Wallet(privateKey)
+
+  console.log(`[CLOB] Force re-deriving credentials for wallet: ${wallet.address}`)
+
+  const tempClient = new ClobClient(CLOB_HOST, CHAIN_ID, wallet)
+  const creds = await tempClient.createOrDeriveApiKey()
+
+  // Create BuilderConfig if available
+  let builderConfig: BuilderConfig | undefined
+  if (builderCreds) {
+    builderConfig = new BuilderConfig({
+      localBuilderCreds: builderCreds
+    })
+  }
+
+  // Update cached creds and rebuild client
+  cachedCreds = creds
+  clobClient = new ClobClient(
+    CLOB_HOST,
+    CHAIN_ID,
+    wallet,
+    cachedCreds,
+    signatureType,
+    funderAddress,
+    undefined,
+    undefined,
+    builderConfig
+  )
+
+  console.log(`[CLOB] Re-derived credentials (key prefix: ${creds.key?.slice(0, 8)}...)`)
+
+  return {
+    apiKey: creds.key,
+    apiSecret: creds.secret,
+    passphrase: creds.passphrase
+  }
 }
 
 /**
@@ -208,10 +293,13 @@ async function getTokenIdForOutcome(slug: string, outcome: string): Promise<{ to
  * Place a bet on a market
  */
 export async function placeBet(params: BetParams): Promise<BetResult> {
+  console.log(`[Bet] Placing bet: ${params.marketSlug} ${params.outcome} ${params.side} $${params.amount} @ ${params.price}`)
+
   try {
     const client = await initializeClobClient()
 
     // Get token ID for the outcome
+    console.log(`[Bet] Fetching token ID for ${params.marketSlug} - ${params.outcome}...`)
     const tokenInfo = await getTokenIdForOutcome(params.marketSlug, params.outcome)
     if (!tokenInfo) {
       return {
@@ -222,11 +310,14 @@ export async function placeBet(params: BetParams): Promise<BetResult> {
 
     // Check if we got an error response
     if ('error' in tokenInfo) {
+      console.log(`[Bet] Error: ${tokenInfo.error}`)
       return {
         success: false,
         error: tokenInfo.error
       }
     }
+
+    console.log(`[Bet] Got token ID: ${tokenInfo.tokenId.slice(0, 20)}... (tickSize: ${tokenInfo.tickSize}, negRisk: ${tokenInfo.negRisk})`)
 
     // Calculate size (number of shares to buy)
     // size = amount / price for BUY orders
@@ -234,13 +325,17 @@ export async function placeBet(params: BetParams): Promise<BetResult> {
       ? params.amount / params.price
       : params.amount
 
+    console.log(`[Bet] Calculated size: ${size.toFixed(4)} shares`)
+
     const side = params.side === 'BUY' ? Side.BUY : Side.SELL
     const options = {
       tickSize: tokenInfo.tickSize as '0.1' | '0.01' | '0.001' | '0.0001',
       negRisk: tokenInfo.negRisk
     }
 
-    let response: { success?: boolean; errorMsg?: string; orderID?: string }
+    let response: { success?: boolean; errorMsg?: string; error?: string; orderID?: string; status?: number }
+
+    console.log(`[Bet] Submitting order to CLOB API...`)
 
     // FOK orders use createAndPostMarketOrder, others use createAndPostOrder
     if (params.orderType === 'FOK') {
@@ -268,12 +363,42 @@ export async function placeBet(params: BetParams): Promise<BetResult> {
       )
     }
 
-    if (response.success === false || response.errorMsg) {
+    console.log(`[Bet] CLOB response:`, JSON.stringify(response))
+
+    // Check for any error response (API can return error in different fields)
+    const errorMsg = response.error || response.errorMsg
+    if (response.success === false || errorMsg || !response.orderID) {
+      // Check if this is an auth error and we haven't retried yet
+      const isAuthError = response.status === 401 || errorMsg?.toLowerCase().includes('unauthorized') || errorMsg?.toLowerCase().includes('invalid api key')
+
+      if (isAuthError && !credentialsRetried) {
+        console.log(`[Bet] Auth error detected, re-deriving credentials and retrying...`)
+        credentialsRetried = true
+
+        try {
+          await forceRederiveCredentials()
+          // Retry the bet with fresh credentials
+          return placeBet(params)
+        } catch (retryError) {
+          console.log(`[Bet] Retry failed: ${(retryError as Error).message}`)
+          return {
+            success: false,
+            error: `Auth error after retry: ${(retryError as Error).message}`
+          }
+        }
+      }
+
+      const errText = errorMsg || 'Order failed - no order ID returned'
+      console.log(`[Bet] Order failed: ${errText}`)
       return {
         success: false,
-        error: response.errorMsg || 'Order failed'
+        error: errText
       }
     }
+
+    // Reset retry flag on success
+    credentialsRetried = false
+    console.log(`[Bet] SUCCESS! Order ID: ${response.orderID}`)
 
     return {
       success: true,
@@ -285,6 +410,7 @@ export async function placeBet(params: BetParams): Promise<BetResult> {
       price: params.price
     }
   } catch (error) {
+    console.log(`[Bet] EXCEPTION: ${(error as Error).message}`)
     return {
       success: false,
       error: (error as Error).message
@@ -376,6 +502,18 @@ export async function updateAllowance(): Promise<void> {
  */
 export async function getMarketInfo(slug: string): Promise<MarketInfo | null> {
   return getMarketBySlug(slug)
+}
+
+/**
+ * Get current cached API credentials (for updating .env)
+ */
+export function getCurrentCredentials(): ApiCredentials | null {
+  if (!cachedCreds) return null
+  return {
+    apiKey: cachedCreds.key,
+    apiSecret: cachedCreds.secret,
+    passphrase: cachedCreds.passphrase
+  }
 }
 
 /**
