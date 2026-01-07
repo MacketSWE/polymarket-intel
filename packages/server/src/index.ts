@@ -462,6 +462,49 @@ app.get('/api/trades/resolved-stats', requireAuth, async (_req, res) => {
   }
 })
 
+// Top trader trades stats endpoint
+app.get('/api/top-trader-trades/stats', requireAuth, async (_req, res) => {
+  try {
+    const { getTopTraderTradesStats } = await import('./db/functions/get_top_trader_trades_stats/index.js')
+    const stats = await getTopTraderTradesStats()
+    res.json({ success: true, data: stats })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Top trader trades endpoint - fetches from top_trader_trades table
+app.get('/api/top-trader-trades', requireAuth, async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0
+    const filter = req.query.filter as string | undefined
+
+    let query = supabaseAdmin
+      .from('top_trader_trades')
+      .select('*')
+
+    if (filter === 'resolved') {
+      query = query.not('resolved_status', 'is', null)
+    } else if (filter === 'won') {
+      query = query.eq('resolved_status', 'won')
+    } else if (filter === 'lost') {
+      query = query.eq('resolved_status', 'lost')
+    } else if (filter === 'pending') {
+      query = query.is('resolved_status', null)
+    }
+
+    const { data, error } = await query
+      .order('latest_timestamp', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) throw error
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 // User trades endpoint - proxies Polymarket Data API
 app.get('/api/polymarket/user/:wallet/trades', requireAuth, async (req, res) => {
   try {
