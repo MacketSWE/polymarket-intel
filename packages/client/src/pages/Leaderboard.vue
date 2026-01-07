@@ -15,6 +15,7 @@ interface Trader {
 
 interface Trade {
   transactionHash: string
+  proxyWallet: string
   side: 'BUY' | 'SELL'
   size: number
   price: number
@@ -24,6 +25,9 @@ interface Trade {
   eventSlug: string
   outcome: string
   icon: string
+  name: string
+  pseudonym: string
+  profileImage: string
 }
 
 type TimePeriod = 'DAY' | 'WEEK' | 'MONTH' | 'ALL'
@@ -47,8 +51,16 @@ const selectedTrader = ref<Trader | null>(null)
 const traderTrades = ref<Trade[]>([])
 const tradesLoading = ref(false)
 
+// Combined trades from all Top P/V traders
+const allTopPVTrades = ref<Trade[]>([])
+const allTradesLoading = ref(false)
+const allTradesProgress = ref({ loaded: 0, total: 0 })
+
 interface GroupedTrade {
   key: string
+  proxyWallet: string
+  traderName: string
+  traderImage: string
   side: 'BUY' | 'SELL'
   title: string
   slug: string
@@ -62,11 +74,14 @@ interface GroupedTrade {
   latestTimestamp: number
 }
 
-function groupTrades(trades: Trade[]): GroupedTrade[] {
+function groupTrades(trades: Trade[], includeTrader = false): GroupedTrade[] {
   const groups = new Map<string, GroupedTrade>()
 
   for (const trade of trades) {
-    const key = `${trade.slug}-${trade.side}-${trade.outcome}`
+    // Include proxyWallet in key when grouping across multiple traders
+    const key = includeTrader
+      ? `${trade.proxyWallet}-${trade.slug}-${trade.side}-${trade.outcome}`
+      : `${trade.slug}-${trade.side}-${trade.outcome}`
 
     if (groups.has(key)) {
       const group = groups.get(key)!
@@ -79,6 +94,9 @@ function groupTrades(trades: Trade[]): GroupedTrade[] {
     } else {
       groups.set(key, {
         key,
+        proxyWallet: trade.proxyWallet,
+        traderName: trade.name || trade.pseudonym || '',
+        traderImage: trade.profileImage || '',
         side: trade.side,
         title: trade.title,
         slug: trade.slug,
@@ -105,6 +123,42 @@ function groupTrades(trades: Trade[]): GroupedTrade[] {
 }
 
 const groupedTrades = computed(() => groupTrades(traderTrades.value))
+const groupedAllTrades = computed(() => groupTrades(allTopPVTrades.value, true))
+
+// Batched fetch with rate limiting - 5 concurrent requests, 200ms between batches
+async function fetchTradesForWallets(wallets: string[], limit = 100): Promise<Trade[]> {
+  const BATCH_SIZE = 5
+  const DELAY_MS = 200
+  const allTrades: Trade[] = []
+
+  allTradesProgress.value = { loaded: 0, total: wallets.length }
+
+  for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
+    const batch = wallets.slice(i, i + BATCH_SIZE)
+
+    const batchResults = await Promise.all(
+      batch.map(wallet =>
+        fetch(`/api/polymarket/user/${wallet}/trades?limit=${limit}`)
+          .then(r => r.json())
+          .then(d => (d.data || []) as Trade[])
+          .catch(() => [] as Trade[])
+      )
+    )
+
+    for (const trades of batchResults) {
+      allTrades.push(...trades)
+    }
+
+    allTradesProgress.value.loaded = Math.min(i + BATCH_SIZE, wallets.length)
+
+    // Delay between batches (except for last batch)
+    if (i + BATCH_SIZE < wallets.length) {
+      await new Promise(resolve => setTimeout(resolve, DELAY_MS))
+    }
+  }
+
+  return allTrades
+}
 
 const periodLabels: Record<TimePeriod, string> = {
   DAY: '24h',
@@ -224,12 +278,22 @@ async function fetchTopPVTraders() {
 
     // Sort by P/V descending
     topPVTraders.value = Array.from(combined.values()).sort((a, b) => b.pv - a.pv)
+
+    // Fetch trades for all Top P/V traders (with rate limiting)
+    loading.value = false
+    allTradesLoading.value = true
+    allTopPVTrades.value = []
+
+    const wallets = topPVTraders.value.map(t => t.proxyWallet)
+    allTopPVTrades.value = await fetchTradesForWallets(wallets, 100)
+
+    allTradesLoading.value = false
   } catch (e) {
     error.value = 'Failed to fetch leaderboard'
     console.error(e)
+    loading.value = false
+    allTradesLoading.value = false
   }
-
-  loading.value = false
 }
 
 async function fetchTraderTrades(wallet: string) {
@@ -452,8 +516,8 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Detail Panel -->
-      <div class="detail-panel" :class="{ open: selectedTrader }">
+      <!-- Detail Panel - Standard View (single trader) -->
+      <div v-if="viewMode === 'standard'" class="detail-panel" :class="{ open: selectedTrader }">
         <template v-if="selectedTrader">
           <div class="panel-header">
             <div class="panel-trader-info">
@@ -506,6 +570,54 @@ onMounted(() => {
         </template>
         <div v-else class="panel-empty">
           Select a trader to view their recent trades
+        </div>
+      </div>
+
+      <!-- Combined Trades Panel - Top P/V View -->
+      <div v-else class="detail-panel open">
+        <div class="panel-header">
+          <h3 class="panel-title">Recent Trades</h3>
+          <span v-if="allTradesLoading" class="loading-progress">
+            Loading {{ allTradesProgress.loaded }}/{{ allTradesProgress.total }}...
+          </span>
+        </div>
+
+        <div class="panel-section">
+          <h4 class="section-title">Positions ({{ groupedAllTrades.length }})</h4>
+          <div v-if="allTradesLoading && groupedAllTrades.length === 0" class="trades-loading">
+            Fetching trades from {{ allTradesProgress.total }} traders...
+          </div>
+          <div v-else-if="groupedAllTrades.length === 0" class="trades-empty">No trades found</div>
+          <div v-else class="trades-list">
+            <div v-for="trade in groupedAllTrades" :key="trade.key" class="trade-item">
+              <div class="trade-trader">
+                <img
+                  v-if="trade.traderImage"
+                  :src="trade.traderImage"
+                  class="trade-avatar"
+                  alt=""
+                />
+                <div v-else class="trade-avatar-placeholder"></div>
+                <a :href="getPolymarketProfileUrl(trade.proxyWallet)" target="_blank" class="trade-trader-name">
+                  {{ trade.traderName || truncateWallet(trade.proxyWallet) }}
+                </a>
+              </div>
+              <div class="trade-main">
+                <span :class="['trade-side', trade.side.toLowerCase()]">{{ trade.side }}</span>
+                <span class="trade-outcome">{{ trade.outcome }}</span>
+                <span v-if="trade.tradeCount > 1" class="trade-count">×{{ trade.tradeCount }}</span>
+              </div>
+              <div class="trade-details">
+                <a :href="getMarketUrl(trade.eventSlug, trade.slug)" target="_blank" class="trade-title">
+                  {{ trade.title }}
+                </a>
+              </div>
+              <div class="trade-meta">
+                <span class="trade-size">{{ formatUSD(trade.totalValue) }} @ {{ (trade.avgPrice * 100).toFixed(0) }}¢</span>
+                <span class="trade-time">{{ formatTime(trade.latestTimestamp) }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -982,6 +1094,44 @@ onMounted(() => {
 .trade-time {
   color: var(--text-faint);
   font-size: var(--font-xs);
+}
+
+.trade-trader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: 6px;
+}
+
+.trade-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.trade-avatar-placeholder {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-active);
+}
+
+.trade-trader-name {
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.trade-trader-name:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.loading-progress {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
 }
 
 .external-link {
