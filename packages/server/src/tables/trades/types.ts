@@ -31,4 +31,6 @@ export interface Trades {
   takeBet?: boolean | null
   // Resolution status
   resolvedStatus?: 'won' | 'lost' | null
+  endDate?: string | null
+  lastResolutionCheck?: string | null
 }

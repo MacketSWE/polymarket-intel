@@ -2,6 +2,7 @@ import { getTrades, classifyTrader } from '../services/polymarket.js'
 import { supabaseAdmin } from '../services/supabase.js'
 
 const MIN_AMOUNT_USD = 2500
+const CLOB_API = 'https://clob.polymarket.com'
 
 interface RawTrade {
   transactionHash: string
@@ -50,6 +51,21 @@ interface Classification {
   classification: string
 }
 
+interface MarketInfo {
+  endDate: string | null
+}
+
+async function fetchMarketEndDate(conditionId: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${CLOB_API}/markets/${conditionId}`)
+    if (!response.ok) return null
+    const market = await response.json() as { end_date_iso?: string }
+    return market.end_date_iso || null
+  } catch {
+    return null
+  }
+}
+
 function qualifiesForTakeBet(trade: RawTrade, classification?: Classification): boolean {
   const amount = trade.size * trade.price
   const followScore = classification?.follow_score ?? 0
@@ -60,7 +76,7 @@ function qualifiesForTakeBet(trade: RawTrade, classification?: Classification): 
     trade.price <= 0.65
 }
 
-function mapToDbRecord(trade: RawTrade, classification?: Classification, takeBet?: boolean) {
+function mapToDbRecord(trade: RawTrade, classification?: Classification, takeBet?: boolean, endDate?: string | null) {
   return {
     transaction_hash: trade.transactionHash,
     proxy_wallet: trade.proxyWallet,
@@ -88,7 +104,8 @@ function mapToDbRecord(trade: RawTrade, classification?: Classification, takeBet
     bot_score: classification?.bot_score ?? null,
     whale_score: classification?.whale_score ?? null,
     classification: classification?.classification ?? null,
-    take_bet: takeBet ?? null
+    take_bet: takeBet ?? null,
+    end_date: endDate ?? null
   }
 }
 
@@ -161,6 +178,34 @@ export async function syncTrades() {
     }
   }
 
+  // Fetch end dates for unique condition_ids
+  const uniqueConditions = [...new Set(largeTrades.map(t => t.conditionId))]
+
+  // Check which conditions already have end_date in DB
+  const { data: existingEndDates } = await supabaseAdmin
+    .from('trades')
+    .select('condition_id, end_date')
+    .in('condition_id', uniqueConditions)
+    .not('end_date', 'is', null)
+    .limit(1000)
+
+  const endDateMap = new Map<string, string | null>()
+  for (const t of existingEndDates || []) {
+    if (!endDateMap.has(t.condition_id)) {
+      endDateMap.set(t.condition_id, t.end_date)
+    }
+  }
+
+  // Fetch end dates for new conditions (limit to 20 per sync)
+  const newConditions = uniqueConditions.filter(c => !endDateMap.has(c))
+  if (newConditions.length > 0) {
+    console.log(`Fetching end dates for ${Math.min(newConditions.length, 20)} markets...`)
+    for (const conditionId of newConditions.slice(0, 20)) {
+      const endDate = await fetchMarketEndDate(conditionId)
+      endDateMap.set(conditionId, endDate)
+    }
+  }
+
   // Get existing take bets to avoid duplicates per (wallet, market, outcome)
   const potentialTakeBets = largeTrades.filter(t => {
     const classification = classificationMap.get(t.proxyWallet)
@@ -197,7 +242,8 @@ export async function syncTrades() {
       }
     }
 
-    return mapToDbRecord(trade, classification, takeBet)
+    const endDate = endDateMap.get(trade.conditionId)
+    return mapToDbRecord(trade, classification, takeBet, endDate)
   })
 
   // Upsert to DB
