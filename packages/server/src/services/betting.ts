@@ -4,7 +4,6 @@ import { Side, OrderType, AssetType } from '@polymarket/clob-client'
 import type { ApiKeyCreds } from '@polymarket/clob-client'
 import { BuilderConfig } from '@polymarket/builder-signing-sdk'
 import axios from 'axios'
-import { HttpsProxyAgent } from 'https-proxy-agent'
 import type { BetParams, BetResult, OpenOrder, Balances, ApiCredentials, MarketInfo } from './betting.types.js'
 import type { BetLog } from '../db/tables/bet_log/type.js'
 import { supabaseAdmin } from './supabase.js'
@@ -13,12 +12,17 @@ const CLOB_HOST = 'https://clob.polymarket.com'
 const GAMMA_API = 'https://gamma-api.polymarket.com'
 const CHAIN_ID = 137 // Polygon mainnet
 
-// Configure proxy if PROXY_URL is set
+// Configure global proxy if PROXY_URL is set
 const proxyUrl = process.env.PROXY_URL
 if (proxyUrl) {
-  const proxyAgent = new HttpsProxyAgent(proxyUrl)
-  axios.defaults.httpsAgent = proxyAgent
-  axios.defaults.proxy = false // Disable axios's built-in proxy to use our agent
+  // Use global-agent to route HTTP/HTTPS requests through the proxy
+  // Exclude localhost, supabase, and other non-polymarket domains
+  process.env.GLOBAL_AGENT_HTTP_PROXY = proxyUrl
+  process.env.GLOBAL_AGENT_HTTPS_PROXY = proxyUrl
+  process.env.GLOBAL_AGENT_NO_PROXY = 'localhost,127.0.0.1,*.supabase.co,supabase.co'
+  import('global-agent').then(globalAgent => {
+    globalAgent.bootstrap()
+  })
   console.log(`[CLOB] Proxy configured: ${proxyUrl.replace(/:[^:@]+@/, ':****@')}`) // Log with hidden password
 }
 
