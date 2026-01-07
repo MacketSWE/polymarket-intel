@@ -34,11 +34,9 @@ export function startCronJobs() {
   runTopPVSyncIfEmpty()
   setInterval(runTopPVSync, TOP_PV_INTERVAL_MS)
 
-  // Top trader trades sync - starts after 2 minutes, runs every 5 minutes
-  setTimeout(() => {
-    runTopTraderTradesSync()
-    setInterval(runTopTraderTradesSync, TOP_TRADER_TRADES_INTERVAL_MS)
-  }, 2 * 60 * 1000)
+  // Top trader trades sync - runs immediately, then every 3 minutes
+  runTopTraderTradesSync()
+  setInterval(runTopTraderTradesSync, TOP_TRADER_TRADES_INTERVAL_MS)
 
   // Top trader trades resolution sync - starts after 3 minutes, runs every 5 minutes
   setTimeout(() => {
@@ -96,7 +94,7 @@ async function runTopTraderTradesSync() {
   try {
     console.log(`[TOP-TRADES] Starting sync...`)
     const result = await syncTopTraderTrades()
-    console.log(`[TOP-TRADES] Summary: ${result.fetched} BUY trades fetched, ${result.upserted} processed (${result.newPositions} new positions, ${result.updatedPositions} updated), ${result.skipped} skipped`)
+    console.log(`[TOP-TRADES] Summary: ${result.fetched} BUY trades, ${result.inserted} new, ${result.skipped} already exist`)
   } catch (error) {
     console.error('[TOP-TRADES] Sync failed:', error)
   }
