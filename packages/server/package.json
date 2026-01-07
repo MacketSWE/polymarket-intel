@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production node dist/index.js"
   },
   "dependencies": {
+    "@polymarket/clob-client": "^5.2.0",
     "@supabase/supabase-js": "^2.89.0",
     "better-sqlite3": "^12.5.0",
     "cookie-parser": "^1.4.7",

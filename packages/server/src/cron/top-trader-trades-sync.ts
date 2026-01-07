@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../services/supabase.js'
+import { autoCopyTrade, isBettingConfigured } from '../services/betting.js'
 
 const DATA_API = 'https://data-api.polymarket.com'
 const BATCH_SIZE = 5
@@ -66,12 +67,12 @@ async function fetchAllTrades(wallets: string[]): Promise<RawTrade[]> {
   return allTrades
 }
 
-export async function syncTopTraderTrades(): Promise<{ fetched: number; inserted: number; skipped: number }> {
+export async function syncTopTraderTrades(): Promise<{ fetched: number; inserted: number; skipped: number; autoCopied: number }> {
   // 1. Get wallets from top_pv_traders
   const wallets = await getTopPVWallets()
   if (wallets.length === 0) {
     console.log(`[TOP-TRADES] No wallets in top_pv_traders table`)
-    return { fetched: 0, inserted: 0, skipped: 0 }
+    return { fetched: 0, inserted: 0, skipped: 0, autoCopied: 0 }
   }
 
   console.log(`[TOP-TRADES] Fetching trades for ${wallets.length} top traders...`)
@@ -84,7 +85,7 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; inserted
   console.log(`[TOP-TRADES] Fetched ${allTrades.length} total trades, ${trades.length} BUY trades`)
 
   if (trades.length === 0) {
-    return { fetched: allTrades.length, inserted: 0, skipped: 0 }
+    return { fetched: allTrades.length, inserted: 0, skipped: 0, autoCopied: 0 }
   }
 
   // 3. Prepare rows for insert
@@ -113,7 +114,9 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; inserted
   // 4. Bulk insert, skip duplicates (unique constraint on wallet+slug+side+outcome)
   let inserted = 0
   let skipped = 0
+  let autoCopied = 0
   const INSERT_BATCH = 100
+  const shouldAutoCopy = process.env.AUTO_BET_ENABLED === 'true' && isBettingConfigured()
 
   for (let i = 0; i < rows.length; i += INSERT_BATCH) {
     const batch = rows.slice(i, i + INSERT_BATCH)
@@ -124,16 +127,38 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; inserted
         onConflict: 'proxy_wallet,slug,side,outcome',
         ignoreDuplicates: true
       })
-      .select('id')
+      .select('id, proxy_wallet, slug, outcome, side, avg_price')
 
     if (error) {
       console.error(`[TOP-TRADES] Batch insert error:`, error.message)
       skipped += batch.length
     } else {
-      inserted += data?.length || 0
-      skipped += batch.length - (data?.length || 0)
+      const newTrades = data || []
+      inserted += newTrades.length
+      skipped += batch.length - newTrades.length
+
+      // Auto-copy each newly inserted trade
+      if (shouldAutoCopy && newTrades.length > 0) {
+        for (const trade of newTrades) {
+          try {
+            await autoCopyTrade({
+              tradeId: trade.id,
+              proxyWallet: trade.proxy_wallet,
+              followScore: 100, // Top traders have high follow score by definition
+              marketSlug: trade.slug,
+              outcome: trade.outcome,
+              side: trade.side as 'BUY' | 'SELL',
+              originalPrice: parseFloat(trade.avg_price)
+            })
+            autoCopied++
+            console.log(`[TOP-TRADES] Auto-copied: ${trade.slug} ${trade.outcome} @ ${trade.avg_price}`)
+          } catch (e) {
+            console.error(`[TOP-TRADES] Auto-copy failed:`, (e as Error).message)
+          }
+        }
+      }
     }
   }
 
-  return { fetched: trades.length, inserted, skipped }
+  return { fetched: trades.length, inserted, skipped, autoCopied }
 }

@@ -602,6 +602,165 @@ app.get('/api/market/status/:conditionId', requireAuth, async (req, res) => {
   }
 })
 
+// === Betting API Endpoints ===
+
+// Check if betting is configured
+app.get('/api/betting/status', requireAuth, async (_req, res) => {
+  try {
+    const { isBettingConfigured, getBalances } = await import('./services/betting.js')
+
+    if (!isBettingConfigured()) {
+      return res.json({
+        success: true,
+        data: {
+          configured: false,
+          message: 'Betting not configured. Set POLYGON_PRIVATE_KEY in .env'
+        }
+      })
+    }
+
+    const balances = await getBalances()
+    res.json({
+      success: true,
+      data: {
+        configured: true,
+        balances
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Place a bet
+app.post('/api/betting/bet', requireAuth, async (req, res) => {
+  try {
+    const { placeBet } = await import('./services/betting.js')
+    const { marketSlug, outcome, side, amount, price, orderType } = req.body
+
+    // Validation
+    if (!marketSlug || !outcome || !amount || !price) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: marketSlug, outcome, amount, price'
+      })
+    }
+
+    if (price < 0.01 || price > 0.99) {
+      return res.status(400).json({
+        success: false,
+        error: 'Price must be between 0.01 and 0.99'
+      })
+    }
+
+    if (amount < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be at least $1'
+      })
+    }
+
+    const result = await placeBet({
+      marketSlug,
+      outcome,
+      side: side || 'BUY',
+      amount,
+      price,
+      orderType: orderType || 'GTC'
+    })
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error })
+    }
+
+    res.json({ success: true, data: result })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get open orders
+app.get('/api/betting/orders', requireAuth, async (_req, res) => {
+  try {
+    const { getOpenOrders } = await import('./services/betting.js')
+    const orders = await getOpenOrders()
+    res.json({ success: true, data: orders })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Cancel an order
+app.delete('/api/betting/orders/:orderId', requireAuth, async (req, res) => {
+  try {
+    const { cancelOrder } = await import('./services/betting.js')
+    const result = await cancelOrder(req.params.orderId)
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error })
+    }
+
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Cancel all orders
+app.delete('/api/betting/orders', requireAuth, async (_req, res) => {
+  try {
+    const { cancelAllOrders } = await import('./services/betting.js')
+    const result = await cancelAllOrders()
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error })
+    }
+
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get balances
+app.get('/api/betting/balances', requireAuth, async (_req, res) => {
+  try {
+    const { getBalances } = await import('./services/betting.js')
+    const balances = await getBalances()
+    res.json({ success: true, data: balances })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get market info for betting
+app.get('/api/betting/market/:slug', requireAuth, async (req, res) => {
+  try {
+    const { getMarketInfo } = await import('./services/betting.js')
+    const info = await getMarketInfo(req.params.slug)
+
+    if (!info) {
+      return res.status(404).json({ success: false, error: 'Market not found' })
+    }
+
+    res.json({ success: true, data: info })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get bet log history
+app.get('/api/bet-log', requireAuth, async (req, res) => {
+  try {
+    const { getBetLogs } = await import('./services/betting.js')
+    const limit = parseInt(req.query.limit as string) || 50
+    const bets = await getBetLogs(limit)
+    res.json({ success: true, data: bets })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.resolve(__dirname, '../../client/dist')
   app.use(express.static(clientDist))

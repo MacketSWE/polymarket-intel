@@ -41,6 +41,11 @@ const error = ref('')
 const filter = ref<FilterType>('all')
 const stats = ref<Stats | null>(null)
 
+// Betting state
+const betAmount = ref(2)
+const bettingInProgress = ref<Set<string>>(new Set())
+const betResults = ref<Map<string, { success: boolean; message: string }>>(new Map())
+
 async function fetchTrades() {
   loading.value = true
   error.value = ''
@@ -112,6 +117,53 @@ function getMarketUrl(eventSlug: string, slug: string): string {
   return `https://polymarket.com/event/${eventSlug}/${slug}`
 }
 
+async function copyBet(trade: TopTraderTrade) {
+  if (bettingInProgress.value.has(trade.id)) return
+
+  bettingInProgress.value.add(trade.id)
+  betResults.value.delete(trade.id)
+
+  try {
+    const res = await fetch('/api/betting/bet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        marketSlug: trade.slug,
+        outcome: trade.outcome,
+        side: trade.side,
+        amount: betAmount.value,
+        price: trade.avg_price
+      })
+    })
+
+    const data = await res.json()
+
+    if (data.success) {
+      betResults.value.set(trade.id, {
+        success: true,
+        message: `Bet placed! Order: ${data.data.orderId?.slice(0, 8)}...`
+      })
+    } else {
+      betResults.value.set(trade.id, {
+        success: false,
+        message: data.error || 'Bet failed'
+      })
+    }
+  } catch (e) {
+    betResults.value.set(trade.id, {
+      success: false,
+      message: 'Network error'
+    })
+  } finally {
+    bettingInProgress.value.delete(trade.id)
+
+    // Clear result after 5 seconds
+    setTimeout(() => {
+      betResults.value.delete(trade.id)
+    }, 5000)
+  }
+}
+
 onMounted(() => {
   fetchTrades()
   fetchStats()
@@ -152,6 +204,14 @@ onMounted(() => {
         Lost
       </button>
       <span class="subnav-spacer"></span>
+      <span class="bet-amount-label">Bet $</span>
+      <input
+        type="number"
+        v-model.number="betAmount"
+        min="1"
+        max="1000"
+        class="bet-amount-input"
+      />
       <span class="trade-count">{{ trades.length }} positions</span>
       <button @click="fetchTrades" :disabled="loading" class="btn btn-sm">
         {{ loading ? 'Loading...' : 'Refresh' }}
@@ -199,6 +259,7 @@ onMounted(() => {
             <th>Status</th>
             <th class="th-right">P/D</th>
             <th class="th-right">Added</th>
+            <th class="th-center">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -245,6 +306,26 @@ onMounted(() => {
             </td>
             <td class="time-cell">
               {{ formatDate(trade.created_at) }}
+            </td>
+            <td class="action-cell">
+              <template v-if="!trade.resolved_status">
+                <button
+                  v-if="!betResults.get(trade.id)"
+                  @click="copyBet(trade)"
+                  :disabled="bettingInProgress.has(trade.id)"
+                  class="copy-btn"
+                >
+                  {{ bettingInProgress.has(trade.id) ? '...' : 'Copy' }}
+                </button>
+                <span
+                  v-else
+                  :class="['bet-result', betResults.get(trade.id)?.success ? 'success' : 'error']"
+                  :title="betResults.get(trade.id)?.message"
+                >
+                  {{ betResults.get(trade.id)?.success ? '✓' : '✗ ' + betResults.get(trade.id)?.message }}
+                </span>
+              </template>
+              <span v-else class="resolved-dash">-</span>
             </td>
           </tr>
         </tbody>
@@ -551,5 +632,82 @@ onMounted(() => {
   font-size: var(--font-xs);
   color: var(--text-muted);
   text-transform: uppercase;
+}
+
+.bet-amount-label {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  margin-right: var(--spacing-xs);
+}
+
+.bet-amount-input {
+  width: 60px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-sm);
+  margin-right: var(--spacing-md);
+}
+
+.bet-amount-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.th-center {
+  text-align: center;
+}
+
+.action-cell {
+  text-align: center;
+  min-width: 100px;
+  max-width: 200px;
+}
+
+.copy-btn {
+  background: var(--accent-primary);
+  color: var(--accent-primary-text);
+  border: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.copy-btn:hover {
+  background: var(--accent-primary-hover);
+}
+
+.copy-btn:disabled {
+  background: var(--bg-active);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.bet-result {
+  font-weight: 600;
+  font-size: var(--font-xs);
+  cursor: help;
+}
+
+.bet-result.success {
+  color: var(--accent-green);
+}
+
+.bet-result.error {
+  color: var(--accent-red);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+  display: inline-block;
+}
+
+.resolved-dash {
+  color: var(--text-muted);
 }
 </style>
