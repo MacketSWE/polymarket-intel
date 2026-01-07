@@ -29,6 +29,7 @@ interface DbTrade {
   resolved_status: 'won' | 'lost' | null
   end_date: string | null
   last_resolution_check: string | null
+  profit_per_dollar: number | null
 }
 
 interface Activity {
@@ -135,6 +136,10 @@ const sortedTrades = computed(() => {
       const aDate = a.end_date ? new Date(a.end_date).getTime() : Infinity
       const bDate = b.end_date ? new Date(b.end_date).getTime() : Infinity
       return (aDate - bDate) * (sortDir.value === 'asc' ? 1 : -1)
+    } else if (sortKey.value === 'profit_per_dollar') {
+      const aProfit = a.profit_per_dollar ?? -Infinity
+      const bProfit = b.profit_per_dollar ?? -Infinity
+      return (bProfit - aProfit) * (sortDir.value === 'asc' ? -1 : 1)
     } else if (sortKey.value === 'title') {
       return a.title.localeCompare(b.title) * dir
     }
@@ -402,6 +407,9 @@ onMounted(() => {
                 <th class="th-sortable" :class="{ sorted: sortKey === 'resolved_status' }" @click="toggleSort('resolved_status')">
                   <span class="th-content">Result <span class="sort-icon">{{ sortKey === 'resolved_status' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
+                <th class="th-sortable" :class="{ sorted: sortKey === 'profit_per_dollar' }" @click="toggleSort('profit_per_dollar')">
+                  <span class="th-content">P/L <span class="sort-icon">{{ sortKey === 'profit_per_dollar' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
+                </th>
                 <th class="th-sortable" :class="{ sorted: sortKey === 'end_date' }" @click="toggleSort('end_date')">
                   <span class="th-content">Ends <span class="sort-icon">{{ sortKey === 'end_date' ? (sortDir === 'asc' ? '↑' : '↓') : '⇅' }}</span></span>
                 </th>
@@ -437,6 +445,12 @@ onMounted(() => {
                 <td class="result-cell">
                   <span v-if="trade.resolved_status === 'won'" class="result-badge won">WON</span>
                   <span v-else-if="trade.resolved_status === 'lost'" class="result-badge lost">LOST</span>
+                  <span v-else class="no-data">-</span>
+                </td>
+                <td class="pnl-cell">
+                  <span v-if="trade.profit_per_dollar !== null" :class="['pnl-value', trade.profit_per_dollar >= 0 ? 'positive' : 'negative']">
+                    {{ trade.profit_per_dollar >= 0 ? '+' : '' }}${{ trade.profit_per_dollar.toFixed(2) }}
+                  </span>
                   <span v-else class="no-data">-</span>
                 </td>
                 <td class="end-date">
@@ -1001,6 +1015,25 @@ onMounted(() => {
 .result-badge.lost {
   background: linear-gradient(135deg, #e53935, #c62828);
   color: white;
+}
+
+.pnl-cell {
+  width: 70px;
+  text-align: right;
+}
+
+.pnl-value {
+  font-family: monospace;
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.pnl-value.positive {
+  color: var(--accent-green);
+}
+
+.pnl-value.negative {
+  color: var(--accent-red);
 }
 
 .end-date {

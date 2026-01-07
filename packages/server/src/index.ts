@@ -382,6 +382,7 @@ app.get('/api/trades/large', requireAuth, async (req, res) => {
     let query = supabaseAdmin
       .from('trades')
       .select('*')
+      .eq('side', 'BUY') // Only show BUY trades
 
     // Apply filter
     if (filter === 'take') {
@@ -415,6 +416,7 @@ app.get('/api/trades/take', requireAuth, async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from('trades')
       .select('*')
+      .eq('side', 'BUY') // Only BUY trades
       .eq('take_bet', true)
       .order('timestamp', { ascending: false })
       .range(offset, offset + limit - 1)

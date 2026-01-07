@@ -33,4 +33,5 @@ export interface Trades {
   resolvedStatus?: 'won' | 'lost' | null
   endDate?: string | null
   lastResolutionCheck?: string | null
+  profitPerDollar?: number | null
 }

@@ -32,7 +32,8 @@ CREATE TABLE trades (
   -- Resolution tracking
   resolved_status TEXT CHECK (resolved_status IN ('won', 'lost')),
   end_date TIMESTAMPTZ,
-  last_resolution_check TIMESTAMPTZ
+  last_resolution_check TIMESTAMPTZ,
+  profit_per_dollar DECIMAL(10, 4)
 );
 
 CREATE INDEX idx_trades_proxy_wallet ON trades(proxy_wallet);

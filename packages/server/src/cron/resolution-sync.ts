@@ -7,8 +7,16 @@ interface Trade {
   transaction_hash: string
   condition_id: string
   outcome: string
+  side: 'BUY' | 'SELL'
+  price: number
   end_date: string | null
   last_resolution_check: string | null
+}
+
+function calculateProfitPerDollar(side: string, price: number, won: boolean): number | null {
+  // Only calculate for BUY trades
+  if (side !== 'BUY') return null
+  return won ? (1 - price) / price : -1
 }
 
 interface MarketResponse {
@@ -63,7 +71,7 @@ export async function syncResolutions(): Promise<{
   // Priority 2: last_resolution_check is null OR older than 7 days
   const { data: trades, error } = await supabaseAdmin
     .from('trades')
-    .select('transaction_hash, condition_id, outcome, end_date, last_resolution_check')
+    .select('transaction_hash, condition_id, outcome, side, price, end_date, last_resolution_check')
     .is('resolved_status', null)
     .or(`end_date.is.null,end_date.lte.${sevenDaysFromNow.toISOString()},last_resolution_check.is.null,last_resolution_check.lte.${sevenDaysAgo.toISOString()}`)
     .limit(500)
@@ -131,12 +139,15 @@ export async function syncResolutions(): Promise<{
 
       // Market is resolved - update all trades
       for (const trade of conditionTrades) {
-        const resolvedStatus = trade.outcome === status.winningOutcome ? 'won' : 'lost'
+        const isWon = trade.outcome === status.winningOutcome
+        const resolvedStatus = isWon ? 'won' : 'lost'
+        const profitPerDollar = calculateProfitPerDollar(trade.side, trade.price, isWon)
 
         const { error: updateError } = await supabaseAdmin
           .from('trades')
           .update({
             resolved_status: resolvedStatus,
+            profit_per_dollar: profitPerDollar,
             last_resolution_check: now.toISOString(),
             end_date: status.endDate || trade.end_date
           })
