@@ -30,6 +30,7 @@ interface TopTraderTrade {
   latest_timestamp: number
   resolved_status: 'won' | 'lost' | null
   profit_per_dollar: number | null
+  created_at: string
 }
 
 type FilterType = 'all' | 'pending' | 'resolved' | 'won' | 'lost'
@@ -89,8 +90,8 @@ function formatUSD(value: number): string {
   return '$' + value.toFixed(0)
 }
 
-function formatTime(timestamp: number): string {
-  const d = new Date(timestamp * 1000)
+function formatDate(isoString: string): string {
+  const d = new Date(isoString)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
     ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
@@ -197,7 +198,7 @@ onMounted(() => {
             <th class="th-right">Trades</th>
             <th>Status</th>
             <th class="th-right">P/D</th>
-            <th class="th-right">Time</th>
+            <th class="th-right">Added</th>
           </tr>
         </thead>
         <tbody>
@@ -243,7 +244,7 @@ onMounted(() => {
               <span v-else class="pd-value muted">-</span>
             </td>
             <td class="time-cell">
-              {{ formatTime(trade.latest_timestamp) }}
+              {{ formatDate(trade.created_at) }}
             </td>
           </tr>
         </tbody>

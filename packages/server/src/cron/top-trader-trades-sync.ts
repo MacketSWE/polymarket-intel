@@ -76,10 +76,13 @@ export async function syncTopTraderTrades(): Promise<{ fetched: number; upserted
   console.log(`  Fetching trades for ${wallets.length} wallets...`)
 
   // 2. Fetch trades (rate-limited)
-  const trades = await fetchAllTrades(wallets)
+  const allTrades = await fetchAllTrades(wallets)
+
+  // Only store BUY trades
+  const trades = allTrades.filter(t => t.side === 'BUY')
 
   if (trades.length === 0) {
-    return { fetched: 0, upserted: 0, skipped: 0 }
+    return { fetched: allTrades.length, upserted: 0, skipped: 0 }
   }
 
   // 3. Filter out already-processed transaction hashes

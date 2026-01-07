@@ -495,7 +495,7 @@ app.get('/api/top-trader-trades', requireAuth, async (req, res) => {
     }
 
     const { data, error } = await query
-      .order('latest_timestamp', { ascending: false })
+      .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
     if (error) throw error
