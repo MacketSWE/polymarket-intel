@@ -49,13 +49,23 @@ function getBettingConfig() {
   const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS
   const signatureType = parseInt(process.env.POLYMARKET_SIGNATURE_TYPE || '0') as 0 | 1 | 2
 
+  // API credentials from .env (already derived)
+  const apiKey = process.env.POLYMARKET_API_KEY
+  const apiSecret = process.env.POLYMARKET_API_SECRET
+  const passphrase = process.env.POLYMARKET_PASSPHRASE
+
   if (!privateKeyPart1 || !PRIVATE_KEY_PART2) {
     throw new Error('POLYGON_PRIVATE_KEY_PART1 not set or PRIVATE_KEY_PART2 not configured')
   }
 
   const privateKey = privateKeyPart1 + PRIVATE_KEY_PART2
 
-  return { privateKey, rpcUrl, funderAddress, signatureType }
+  // Build API creds object if all values present
+  const apiCreds = apiKey && apiSecret && passphrase
+    ? { key: apiKey, secret: apiSecret, passphrase }
+    : null
+
+  return { privateKey, rpcUrl, funderAddress, signatureType, apiCreds }
 }
 
 /**
@@ -64,14 +74,19 @@ function getBettingConfig() {
 export async function initializeClobClient(): Promise<ClobClient> {
   if (clobClient) return clobClient
 
-  const { privateKey, funderAddress, signatureType } = getBettingConfig()
+  const { privateKey, funderAddress, signatureType, apiCreds } = getBettingConfig()
   const wallet = new Wallet(privateKey)
 
-  // First, derive API credentials
+  // Use existing API credentials from .env, or derive new ones
   if (!cachedCreds) {
-    const tempClient = new ClobClient(CLOB_HOST, CHAIN_ID, wallet)
-    cachedCreds = await tempClient.createOrDeriveApiKey()
-    console.log('Derived API credentials')
+    if (apiCreds) {
+      cachedCreds = apiCreds
+      console.log('Using API credentials from .env')
+    } else {
+      const tempClient = new ClobClient(CLOB_HOST, CHAIN_ID, wallet)
+      cachedCreds = await tempClient.createOrDeriveApiKey()
+      console.log('Derived new API credentials')
+    }
   }
 
   // Create full client with credentials

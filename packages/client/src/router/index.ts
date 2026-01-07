@@ -4,6 +4,7 @@ import Top from '../pages/Top.vue'
 import BigTrades from '../pages/BigTrades.vue'
 import Leaderboard from '../pages/Leaderboard.vue'
 import TopTraderTrades from '../pages/TopTraderTrades.vue'
+import BetLog from '../pages/BetLog.vue'
 import Login from '../pages/Login.vue'
 
 const router = createRouter({
@@ -39,6 +40,11 @@ const router = createRouter({
       path: '/top-trader-trades',
       name: 'topTraderTrades',
       component: TopTraderTrades
+    },
+    {
+      path: '/bet-log',
+      name: 'betLog',
+      component: BetLog
     }
   ]
 })

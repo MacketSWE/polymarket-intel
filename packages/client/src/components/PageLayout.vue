@@ -24,6 +24,7 @@ async function logout() {
       <nav class="nav">
         <RouterLink to="/" :class="['nav-link', { active: route.path === '/' }]">Trades</RouterLink>
         <RouterLink to="/top-trader-trades" :class="['nav-link', { active: route.path === '/top-trader-trades' }]">Top Traders</RouterLink>
+        <RouterLink to="/bet-log" :class="['nav-link', { active: route.path === '/bet-log' }]">Bet Log</RouterLink>
         <RouterLink to="/new" :class="['nav-link', { active: route.path === '/new' }]">New Events</RouterLink>
         <RouterLink to="/top" :class="['nav-link', { active: route.path === '/top' }]">Top Events</RouterLink>
         <RouterLink to="/leaderboard" :class="['nav-link', { active: route.path === '/leaderboard' }]">Leaderboard</RouterLink>
