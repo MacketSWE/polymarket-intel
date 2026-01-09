@@ -11,6 +11,7 @@ import { supabaseAdmin } from './supabase.js'
 const CLOB_HOST = 'https://clob.polymarket.com'
 const GAMMA_API = 'https://gamma-api.polymarket.com'
 const CHAIN_ID = 137 // Polygon mainnet
+const MIN_ORDER_SIZE = 5 // Polymarket minimum order size in shares
 
 // Configure global proxy if PROXY_URL is set
 const proxyUrl = process.env.PROXY_URL
@@ -340,6 +341,17 @@ export async function placeBet(params: BetParams): Promise<BetResult> {
 
     console.log(`[Bet] Calculated size: ${size.toFixed(4)} shares`)
 
+    // Validate minimum order size
+    if (size < MIN_ORDER_SIZE) {
+      const minAmount = MIN_ORDER_SIZE * params.price
+      const error = `Order size ${size.toFixed(2)} shares is below minimum of ${MIN_ORDER_SIZE}. At price ${params.price}, minimum amount is $${minAmount.toFixed(2)}`
+      console.log(`[Bet] ${error}`)
+      return {
+        success: false,
+        error
+      }
+    }
+
     const side = params.side === 'BUY' ? Side.BUY : Side.SELL
     const options = {
       tickSize: tokenInfo.tickSize as '0.1' | '0.01' | '0.001' | '0.0001',
@@ -656,7 +668,6 @@ export async function autoCopyTrade(params: {
   side: 'BUY' | 'SELL'
   originalPrice: number
 }): Promise<BetLog> {
-  const COPY_AMOUNT = 2 // Fixed $2 USD
   const PRICE_BUFFER = 0.05 // 5 cents buffer
 
   // Calculate copy price (cap at 0.95 for BUY, floor at 0.05 for SELL)
@@ -667,14 +678,17 @@ export async function autoCopyTrade(params: {
   // Round to 2 decimal places
   const roundedPrice = Math.round(copyPrice * 100) / 100
 
-  console.log(`[AutoCopy] Copying trade: ${params.marketSlug} ${params.outcome} ${params.side} @ ${roundedPrice} (original: ${params.originalPrice})`)
+  // Always buy 5 shares, but use $2 if price <= 0.40 (which gives 5+ shares anyway)
+  const copyAmount = roundedPrice <= 0.40 ? 2 : MIN_ORDER_SIZE * roundedPrice
+
+  console.log(`[AutoCopy] Copying trade: ${params.marketSlug} ${params.outcome} ${params.side} $${copyAmount.toFixed(2)} @ ${roundedPrice} (original: ${params.originalPrice})`)
 
   // Place the bet
   const result = await placeBet({
     marketSlug: params.marketSlug,
     outcome: params.outcome,
     side: params.side,
-    amount: COPY_AMOUNT,
+    amount: copyAmount,
     price: roundedPrice
   })
 
@@ -684,7 +698,7 @@ export async function autoCopyTrade(params: {
     marketSlug: params.marketSlug,
     outcome: params.outcome,
     side: params.side,
-    amount: COPY_AMOUNT,
+    amount: copyAmount,
     price: roundedPrice,
     status: result.success ? 'placed' : 'failed',
     errorMessage: result.error,
