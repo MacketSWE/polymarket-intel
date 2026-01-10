@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Rules
+
+- **NEVER run `git push`** - Only commit changes, never push. The user will push manually when ready.
+
 ## Project Overview
 
-TIC LENS - A Polymarket analytics dashboard that tracks large trades, classifies traders, and identifies follow-worthy betting signals.
+Polymarket Intelligence - A Polymarket analytics dashboard that tracks large trades, classifies traders, and identifies follow-worthy betting signals.
 
 ## Commands
 
