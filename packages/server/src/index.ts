@@ -819,6 +819,77 @@ app.get('/api/bet-log', requireAuth, async (req, res) => {
   }
 })
 
+// === Claiming API Endpoints ===
+
+// Check if claiming is configured
+app.get('/api/claiming/status', requireAuth, async (_req, res) => {
+  try {
+    const { isClaimingConfigured } = await import('./services/claiming.js')
+
+    if (!isClaimingConfigured()) {
+      return res.json({
+        success: true,
+        data: {
+          configured: false,
+          message: 'Claiming not configured. Ensure BUILDER_API_KEY, BUILDER_API_SECRET, BUILDER_PASSPHRASE, and POLYMARKET_FUNDER_ADDRESS are set.'
+        }
+      })
+    }
+
+    res.json({
+      success: true,
+      data: { configured: true }
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Get claimable (won) positions
+app.get('/api/claiming/positions', requireAuth, async (_req, res) => {
+  try {
+    const { getClaimablePositions } = await import('./services/claiming.js')
+    const positions = await getClaimablePositions()
+    res.json({ success: true, data: positions })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Claim a single position
+app.post('/api/claiming/claim/:conditionId', requireAuth, async (req, res) => {
+  try {
+    const { claimPosition } = await import('./services/claiming.js')
+    const { conditionId } = req.params
+    const negRisk = req.body.negRisk === true
+
+    if (!conditionId) {
+      return res.status(400).json({ success: false, error: 'conditionId is required' })
+    }
+
+    const result = await claimPosition(conditionId, negRisk)
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error })
+    }
+
+    res.json({ success: true, data: result })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
+// Claim all winning positions
+app.post('/api/claiming/claim-all', requireAuth, async (_req, res) => {
+  try {
+    const { claimAllWinning } = await import('./services/claiming.js')
+    const result = await claimAllWinning()
+    res.json({ success: true, data: result })
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message })
+  }
+})
+
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.resolve(__dirname, '../../client/dist')
   app.use(express.static(clientDist))
