@@ -7,6 +7,7 @@ import axios from 'axios'
 import type { BetParams, BetResult, OpenOrder, Balances, ApiCredentials, MarketInfo } from './betting.types.js'
 import type { BetLog } from '../db/tables/bet_log/type.js'
 import { supabaseAdmin } from './supabase.js'
+import { calculateShares } from '../utils/betting.js'
 
 const CLOB_HOST = 'https://clob.polymarket.com'
 const GAMMA_API = 'https://gamma-api.polymarket.com'
@@ -678,10 +679,10 @@ export async function autoCopyTrade(params: {
   // Round to 2 decimal places
   const roundedPrice = Math.round(copyPrice * 100) / 100
 
-  // Always buy 5 shares, but use $2 if price <= 0.40 (which gives 5+ shares anyway)
-  const copyAmount = roundedPrice <= 0.40 ? 2 : MIN_ORDER_SIZE * roundedPrice
+  // Calculate shares with $3 minimum: if 5 shares costs >= $3, keep 5 shares; otherwise buy enough for $3
+  const { shares: copyShares, cost: copyAmount } = calculateShares(roundedPrice)
 
-  console.log(`[AutoCopy] Copying trade: ${params.marketSlug} ${params.outcome} ${params.side} $${copyAmount.toFixed(2)} @ ${roundedPrice} (original: ${params.originalPrice})`)
+  console.log(`[AutoCopy] Copying trade: ${params.marketSlug} ${params.outcome} ${params.side} ${copyShares} shares @ ${roundedPrice} = $${copyAmount.toFixed(2)} (original: ${params.originalPrice})`)
 
   // Place the bet
   const result = await placeBet({
