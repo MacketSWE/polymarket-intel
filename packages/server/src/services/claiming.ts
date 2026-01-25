@@ -46,11 +46,103 @@ const negRiskRedeemAbi = [
 
 let relayClient: RelayClient | null = null
 
+// Rate limiting state
+interface RateLimitState {
+  isLimited: boolean
+  resetAt: number | null  // Unix timestamp when limit resets
+  remainingUnits: number | null
+}
+
+let rateLimitState: RateLimitState = {
+  isLimited: false,
+  resetAt: null,
+  remainingUnits: null
+}
+
+// Rate limit configuration
+const RATE_LIMIT_CONFIG = {
+  delayBetweenClaimsMs: 5000,  // 5 seconds between claims
+  maxClaimsPerRun: 10,         // Max claims per sync run
+  cooldownAfterLimitMs: 60000  // 1 minute cooldown after hitting limit
+}
+
 export interface ClaimResult {
   success: boolean
   conditionId: string
   txHash?: string
   error?: string
+  rateLimited?: boolean
+}
+
+/**
+ * Check if we're currently rate limited
+ */
+export function isRateLimited(): boolean {
+  if (!rateLimitState.isLimited) return false
+
+  // Check if the rate limit has expired
+  if (rateLimitState.resetAt && Date.now() >= rateLimitState.resetAt) {
+    console.log('[Claiming] Rate limit has expired, resetting state')
+    rateLimitState = { isLimited: false, resetAt: null, remainingUnits: null }
+    return false
+  }
+
+  return true
+}
+
+/**
+ * Get rate limit status for logging/monitoring
+ */
+export function getRateLimitStatus(): { isLimited: boolean; resetsIn: number | null } {
+  if (!rateLimitState.isLimited || !rateLimitState.resetAt) {
+    return { isLimited: false, resetsIn: null }
+  }
+
+  const resetsIn = Math.max(0, rateLimitState.resetAt - Date.now())
+  return { isLimited: true, resetsIn }
+}
+
+/**
+ * Parse rate limit info from error response
+ */
+function parseRateLimitError(errorMsg: string): { resetInSeconds: number } | null {
+  // Match: "quota exceeded: 0 units remaining, resets in 13432 seconds"
+  const match = errorMsg.match(/resets in (\d+) seconds/)
+  if (match) {
+    return { resetInSeconds: parseInt(match[1], 10) }
+  }
+  return null
+}
+
+/**
+ * Handle rate limit error - update state
+ */
+function handleRateLimitError(errorMsg: string): void {
+  const parsed = parseRateLimitError(errorMsg)
+
+  if (parsed) {
+    rateLimitState = {
+      isLimited: true,
+      resetAt: Date.now() + (parsed.resetInSeconds * 1000),
+      remainingUnits: 0
+    }
+    console.log(`[Claiming] Rate limited! Resets in ${parsed.resetInSeconds} seconds (${(parsed.resetInSeconds / 3600).toFixed(1)} hours)`)
+  } else {
+    // Unknown rate limit format, use default cooldown
+    rateLimitState = {
+      isLimited: true,
+      resetAt: Date.now() + RATE_LIMIT_CONFIG.cooldownAfterLimitMs,
+      remainingUnits: 0
+    }
+    console.log(`[Claiming] Rate limited! Using default cooldown of ${RATE_LIMIT_CONFIG.cooldownAfterLimitMs / 1000} seconds`)
+  }
+}
+
+/**
+ * Get rate limit configuration
+ */
+export function getRateLimitConfig() {
+  return { ...RATE_LIMIT_CONFIG }
 }
 
 export interface ClaimablePosition {
@@ -202,11 +294,132 @@ function createNegRiskRedeemTransaction(conditionId: string) {
   }
 }
 
+export interface BatchClaimResult {
+  success: boolean
+  txHash?: string
+  error?: string
+  rateLimited?: boolean
+  positions: Array<{
+    conditionId: string
+    success: boolean
+  }>
+}
+
+/**
+ * Claim multiple positions in a single batched transaction
+ * This uses only 1 API quota unit regardless of how many positions are claimed
+ */
+export async function claimPositionsBatched(
+  positions: Array<{ conditionId: string; negRisk: boolean }>
+): Promise<BatchClaimResult> {
+  if (positions.length === 0) {
+    return {
+      success: true,
+      positions: []
+    }
+  }
+
+  console.log(`[Claiming] Batching ${positions.length} positions into single transaction`)
+
+  // Check if we're rate limited before attempting
+  if (isRateLimited()) {
+    const status = getRateLimitStatus()
+    const resetsInMin = status.resetsIn ? Math.ceil(status.resetsIn / 60000) : 0
+    console.log(`[Claiming] Skipping batch - rate limited for ${resetsInMin} more minutes`)
+    return {
+      success: false,
+      error: `Rate limited - resets in ${resetsInMin} minutes`,
+      rateLimited: true,
+      positions: positions.map(p => ({ conditionId: p.conditionId, success: false }))
+    }
+  }
+
+  try {
+    const client = await initializeRelayClient()
+
+    // Create all redeem transactions
+    const transactions = positions.map(p =>
+      p.negRisk
+        ? createNegRiskRedeemTransaction(p.conditionId)
+        : createCtfRedeemTransaction(p.conditionId)
+    )
+
+    const conditionIds = positions.map(p => p.conditionId.slice(0, 10)).join(', ')
+    console.log(`[Claiming] Submitting batched redeem for: ${conditionIds}...`)
+
+    const response = await client.execute(transactions, `Batch redeem ${positions.length} positions`)
+
+    console.log(`[Claiming] Transaction ID: ${response.transactionID}`)
+    console.log(`[Claiming] Initial state: ${response.state}`)
+    console.log(`[Claiming] Hash: ${response.hash || response.transactionHash || 'pending'}`)
+    console.log(`[Claiming] Waiting for confirmation (up to 2 minutes)...`)
+
+    // Poll with longer timeout: 60 polls * 2000ms = 2 minutes
+    const result = await client.pollUntilState(
+      response.transactionID,
+      ['STATE_MINED', 'STATE_CONFIRMED'],
+      'STATE_FAILED',
+      60,   // maxPolls
+      2000  // pollFrequency ms
+    )
+
+    if (!result) {
+      console.log(`[Claiming] Batch transaction failed or timed out`)
+      return {
+        success: false,
+        error: `Transaction failed or timed out. ID: ${response.transactionID}`,
+        positions: positions.map(p => ({ conditionId: p.conditionId, success: false }))
+      }
+    }
+
+    console.log(`[Claiming] BATCH SUCCESS! TX: ${result.transactionHash}`)
+
+    return {
+      success: true,
+      txHash: result.transactionHash,
+      positions: positions.map(p => ({ conditionId: p.conditionId, success: true }))
+    }
+  } catch (error) {
+    const errorMsg = (error as Error).message
+    console.log(`[Claiming] BATCH FAILED: ${errorMsg}`)
+
+    // Check for rate limit errors (429)
+    if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests') || errorMsg.includes('quota exceeded')) {
+      handleRateLimitError(errorMsg)
+      return {
+        success: false,
+        error: errorMsg,
+        rateLimited: true,
+        positions: positions.map(p => ({ conditionId: p.conditionId, success: false }))
+      }
+    }
+
+    return {
+      success: false,
+      error: errorMsg,
+      positions: positions.map(p => ({ conditionId: p.conditionId, success: false }))
+    }
+  }
+}
+
 /**
  * Claim a single position by condition ID
  */
 export async function claimPosition(conditionId: string, negRisk: boolean = false): Promise<ClaimResult> {
   console.log(`[Claiming] Claiming position: ${conditionId} (negRisk: ${negRisk})`)
+
+  // Check if we're rate limited before attempting
+  if (isRateLimited()) {
+    const status = getRateLimitStatus()
+    const resetsInMin = status.resetsIn ? Math.ceil(status.resetsIn / 60000) : 0
+    console.log(`[Claiming] Skipping - rate limited for ${resetsInMin} more minutes`)
+    return {
+      success: false,
+      conditionId,
+      error: `Rate limited - resets in ${resetsInMin} minutes`,
+      rateLimited: true
+    }
+  }
 
   try {
     const client = await initializeRelayClient()
@@ -251,6 +464,17 @@ export async function claimPosition(conditionId: string, negRisk: boolean = fals
   } catch (error) {
     const errorMsg = (error as Error).message
     console.log(`[Claiming] FAILED: ${errorMsg}`)
+
+    // Check for rate limit errors (429)
+    if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests') || errorMsg.includes('quota exceeded')) {
+      handleRateLimitError(errorMsg)
+      return {
+        success: false,
+        conditionId,
+        error: errorMsg,
+        rateLimited: true
+      }
+    }
 
     return {
       success: false,
@@ -335,41 +559,66 @@ export async function getAllRedeemablePositions(): Promise<ClaimablePosition[]> 
 }
 
 /**
- * Claim all winning positions
+ * Claim all winning positions using batched transactions
+ * All positions are claimed in a single relayer call (1 API quota unit)
  */
 export async function claimAllWinning(): Promise<{
   total: number
   claimed: number
   failed: number
+  rateLimited: boolean
+  txHash?: string
   results: ClaimResult[]
 }> {
+  // Check if we're rate limited before starting
+  if (isRateLimited()) {
+    const status = getRateLimitStatus()
+    const resetsInMin = status.resetsIn ? Math.ceil(status.resetsIn / 60000) : 0
+    console.log(`[Claiming] Rate limited - resets in ${resetsInMin} minutes`)
+    return {
+      total: 0,
+      claimed: 0,
+      failed: 0,
+      rateLimited: true,
+      results: []
+    }
+  }
+
   const positions = await getClaimablePositions()
   console.log(`[Claiming] Found ${positions.length} claimable positions`)
 
-  const results: ClaimResult[] = []
-  let claimed = 0
-  let failed = 0
-
-  for (const position of positions) {
-    const result = await claimPosition(position.conditionId, position.negRisk)
-    results.push(result)
-
-    if (result.success) {
-      claimed++
-    } else {
-      failed++
-    }
-
-    // Small delay between claims to avoid rate limiting
-    if (positions.length > 1) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
+  if (positions.length === 0) {
+    return {
+      total: 0,
+      claimed: 0,
+      failed: 0,
+      rateLimited: false,
+      results: []
     }
   }
+
+  // Batch all positions into a single transaction
+  const batchResult = await claimPositionsBatched(
+    positions.map(p => ({ conditionId: p.conditionId, negRisk: p.negRisk }))
+  )
+
+  // Convert batch result to individual results for compatibility
+  const results: ClaimResult[] = batchResult.positions.map(p => ({
+    success: p.success,
+    conditionId: p.conditionId,
+    txHash: p.success ? batchResult.txHash : undefined,
+    error: p.success ? undefined : batchResult.error
+  }))
+
+  const claimed = batchResult.success ? positions.length : 0
+  const failed = batchResult.success ? 0 : positions.length
 
   return {
     total: positions.length,
     claimed,
     failed,
+    rateLimited: batchResult.rateLimited || false,
+    txHash: batchResult.txHash,
     results
   }
 }
@@ -392,4 +641,12 @@ export function isClaimingConfigured(): boolean {
 export function resetRelayClient(): void {
   relayClient = null
   console.log('[Claiming] Relay client reset')
+}
+
+/**
+ * Reset rate limit state (useful for testing or manual override)
+ */
+export function resetRateLimitState(): void {
+  rateLimitState = { isLimited: false, resetAt: null, remainingUnits: null }
+  console.log('[Claiming] Rate limit state reset')
 }

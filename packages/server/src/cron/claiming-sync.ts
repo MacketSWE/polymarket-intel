@@ -13,8 +13,10 @@
 
 import {
   getClaimablePositions,
-  claimPosition,
+  claimPositionsBatched,
   isClaimingConfigured,
+  isRateLimited,
+  getRateLimitStatus,
   type ClaimablePosition
 } from '../services/claiming.js'
 import { supabaseAdmin } from '../services/supabase.js'
@@ -79,7 +81,8 @@ async function logClaimAttempt(params: {
 }
 
 /**
- * Main sync function - checks for claimable positions and claims them
+ * Main sync function - checks for claimable positions and claims them in a batch
+ * Uses a single relayer call for all positions (1 API quota unit)
  */
 export async function syncClaiming(): Promise<ClaimingSyncResult> {
   const result: ClaimingSyncResult = {
@@ -94,6 +97,14 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
   // Check if claiming is configured
   if (!isClaimingConfigured()) {
     console.log('[CLAIMING] Not configured, skipping')
+    return result
+  }
+
+  // Check if we're currently rate limited
+  if (isRateLimited()) {
+    const status = getRateLimitStatus()
+    const resetsInMin = status.resetsIn ? Math.ceil(status.resetsIn / 60000) : 0
+    console.log(`[CLAIMING] Rate limited - resets in ${resetsInMin} minutes, skipping this run`)
     return result
   }
 
@@ -113,34 +124,45 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
     return result
   }
 
-  console.log(`[CLAIMING] Found ${positions.length} winning positions to claim`)
-
-  // Try to claim each position
+  // Filter out already claimed positions
+  const toClaim: ClaimablePosition[] = []
   for (const position of positions) {
-    // Check if already claimed
     const alreadyClaimed = await wasAlreadyClaimed(position.conditionId)
     if (alreadyClaimed) {
       console.log(`[CLAIMING] Skipping ${position.conditionId.slice(0, 16)}... (already claimed)`)
       result.skipped++
-      continue
+    } else {
+      toClaim.push(position)
     }
+  }
 
-    console.log(`[CLAIMING] Claiming: ${position.title.slice(0, 40)}... ($${position.currentValue.toFixed(2)})`)
+  if (toClaim.length === 0) {
+    console.log('[CLAIMING] All positions already claimed')
+    return result
+  }
 
-    const claimResult = await claimPosition(position.conditionId, position.negRisk)
+  const totalValue = toClaim.reduce((sum, p) => sum + p.currentValue, 0)
+  console.log(`[CLAIMING] Batching ${toClaim.length} positions ($${totalValue.toFixed(2)} total) into single transaction`)
 
-    if (claimResult.success) {
-      console.log(`[CLAIMING] SUCCESS: ${claimResult.txHash}`)
-      result.claimed++
-      result.totalValue += position.currentValue
+  // Claim all positions in a single batch
+  const batchResult = await claimPositionsBatched(
+    toClaim.map(p => ({ conditionId: p.conditionId, negRisk: p.negRisk }))
+  )
 
+  if (batchResult.success) {
+    console.log(`[CLAIMING] BATCH SUCCESS! TX: ${batchResult.txHash}`)
+    result.claimed = toClaim.length
+    result.totalValue = totalValue
+
+    // Log each claimed position
+    for (const position of toClaim) {
       result.details.push({
         conditionId: position.conditionId,
         title: position.title,
         outcome: position.outcome,
         value: position.currentValue,
         status: 'claimed',
-        txHash: claimResult.txHash
+        txHash: batchResult.txHash
       })
 
       await logClaimAttempt({
@@ -149,16 +171,19 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
         outcome: position.outcome,
         value: position.currentValue,
         status: 'claimed',
-        txHash: claimResult.txHash
+        txHash: batchResult.txHash
       })
-    } else {
-      // Check if it's an "oracle not ready" error
-      const isOracleNotReady = claimResult.error?.includes('result for condition not received yet')
+    }
+  } else {
+    console.log(`[CLAIMING] BATCH FAILED: ${batchResult.error}`)
 
-      if (isOracleNotReady) {
-        console.log(`[CLAIMING] SKIPPED (oracle not ready): ${position.conditionId.slice(0, 16)}...`)
-        result.skipped++
+    // Check if it's an oracle error - mark as skipped (will retry)
+    const isOracleNotReady = batchResult.error?.includes('result for condition not received yet')
 
+    if (isOracleNotReady) {
+      console.log(`[CLAIMING] Oracle not ready for one or more positions, will retry next run`)
+      result.skipped += toClaim.length
+      for (const position of toClaim) {
         result.details.push({
           conditionId: position.conditionId,
           title: position.title,
@@ -167,18 +192,18 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
           status: 'skipped',
           error: 'Oracle not ready'
         })
-        // Don't log to DB - will retry next run
-      } else {
-        console.log(`[CLAIMING] FAILED: ${claimResult.error}`)
-        result.failed++
-
+      }
+    } else {
+      // Real failure - log it
+      result.failed = toClaim.length
+      for (const position of toClaim) {
         result.details.push({
           conditionId: position.conditionId,
           title: position.title,
           outcome: position.outcome,
           value: position.currentValue,
           status: 'failed',
-          error: claimResult.error
+          error: batchResult.error
         })
 
         await logClaimAttempt({
@@ -187,14 +212,12 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
           outcome: position.outcome,
           value: position.currentValue,
           status: 'failed',
-          error: claimResult.error
+          error: batchResult.error
         })
       }
     }
-
-    // Small delay between claims to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 2000))
   }
 
+  console.log(`[CLAIMING] Run complete: ${result.claimed} claimed, ${result.failed} failed, ${result.skipped} skipped`)
   return result
 }

@@ -157,7 +157,7 @@ async function claimSingle(conditionId: string, negRisk: boolean = false) {
 }
 
 async function claimAll() {
-  console.log('=== Claiming All Winning Positions ===\n')
+  console.log('=== Claiming All Winning Positions (Batched) ===\n')
 
   // First show what we're about to claim
   const positions = await getClaimablePositions()
@@ -170,7 +170,7 @@ async function claimAll() {
   console.log(`Found ${positions.length} position(s) to claim:\n`)
   positions.forEach((p, i) => printPosition(p, i))
 
-  console.log('Starting claims...\n')
+  console.log('Batching all positions into single transaction...\n')
 
   const result = await claimAllWinning()
 
@@ -179,13 +179,22 @@ async function claimAll() {
   console.log(`Claimed: ${result.claimed}`)
   console.log(`Failed: ${result.failed}`)
 
-  if (result.results.length > 0) {
+  if (result.rateLimited) {
+    console.log('\nRate limited! Try again later.')
+  }
+
+  if (result.txHash) {
+    console.log(`\nBatch Transaction: ${result.txHash}`)
+    console.log(`View on Polygonscan: https://polygonscan.com/tx/${result.txHash}`)
+  }
+
+  if (result.results.length > 0 && !result.txHash) {
     console.log('\nDetails:')
     for (const r of result.results) {
       if (r.success) {
-        console.log(`  ✓ ${r.conditionId.slice(0, 20)}... - TX: ${r.txHash?.slice(0, 20)}...`)
+        console.log(`  [OK] ${r.conditionId.slice(0, 20)}...`)
       } else {
-        console.log(`  ✗ ${r.conditionId.slice(0, 20)}... - Error: ${r.error}`)
+        console.log(`  [FAIL] ${r.conditionId.slice(0, 20)}... - Error: ${r.error}`)
       }
     }
   }
