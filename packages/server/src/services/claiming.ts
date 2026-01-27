@@ -1,4 +1,4 @@
-import { createWalletClient, http, encodeFunctionData, zeroHash, type Hex } from 'viem'
+import { createWalletClient, createPublicClient, http, encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { polygon } from 'viem/chains'
 import { RelayClient, RelayerTxType } from '@polymarket/builder-relayer-client'
@@ -45,6 +45,7 @@ const negRiskRedeemAbi = [
 ] as const
 
 let relayClient: RelayClient | null = null
+let publicClient: PublicClient | null = null
 
 // Rate limiting state
 interface RateLimitState {
@@ -58,6 +59,9 @@ let rateLimitState: RateLimitState = {
   resetAt: null,
   remainingUnits: null
 }
+
+// Max positions per batch relayer call
+export const MAX_BATCH_SIZE = 8
 
 // Rate limit configuration
 const RATE_LIMIT_CONFIG = {
@@ -246,6 +250,58 @@ async function initializeRelayClient(): Promise<RelayClient> {
 
   console.log(`[Claiming] Relay client initialized`)
   return relayClient
+}
+
+/**
+ * Get a read-only public client for eth_call simulations
+ */
+function getPublicClient(): PublicClient {
+  if (publicClient) return publicClient
+  const config = getClaimingConfig()
+  publicClient = createPublicClient({
+    chain: polygon,
+    transport: http(config.rpcUrl)
+  })
+  return publicClient
+}
+
+export interface PreValidationResult {
+  valid: Array<{ conditionId: string; negRisk: boolean }>
+  invalid: Array<{ conditionId: string; error: string }>
+}
+
+/**
+ * Pre-validate positions using eth_call (read-only, no gas cost, no relayer quota)
+ * Filters out positions that would revert on-chain before sending to relayer
+ */
+export async function preValidatePositions(
+  positions: Array<{ conditionId: string; negRisk: boolean }>
+): Promise<PreValidationResult> {
+  const config = getClaimingConfig()
+  const client = getPublicClient()
+  const valid: Array<{ conditionId: string; negRisk: boolean }> = []
+  const invalid: Array<{ conditionId: string; error: string }> = []
+
+  for (const p of positions) {
+    const tx = p.negRisk
+      ? createNegRiskRedeemTransaction(p.conditionId)
+      : createCtfRedeemTransaction(p.conditionId)
+    try {
+      await client.call({
+        to: tx.to as Hex,
+        data: tx.data as Hex,
+        account: config.funderAddress as Hex,
+      })
+      valid.push(p)
+    } catch (error) {
+      const errorMsg = (error as Error).message || 'eth_call reverted'
+      invalid.push({ conditionId: p.conditionId, error: errorMsg })
+      console.log(`[Claiming] Pre-validation FAILED for ${p.conditionId.slice(0, 10)}... - skipping`)
+    }
+  }
+
+  console.log(`[Claiming] Pre-validation: ${valid.length} valid, ${invalid.length} invalid`)
+  return { valid, invalid }
 }
 
 /**

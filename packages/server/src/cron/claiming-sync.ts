@@ -14,9 +14,11 @@
 import {
   getClaimablePositions,
   claimPositionsBatched,
+  preValidatePositions,
   isClaimingConfigured,
   isRateLimited,
   getRateLimitStatus,
+  MAX_BATCH_SIZE,
   type ClaimablePosition
 } from '../services/claiming.js'
 import { supabaseAdmin } from '../services/supabase.js'
@@ -141,69 +143,67 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
     return result
   }
 
-  const totalValue = toClaim.reduce((sum, p) => sum + p.currentValue, 0)
-  console.log(`[CLAIMING] Batching ${toClaim.length} positions ($${totalValue.toFixed(2)} total) into single transaction`)
-
-  // Claim all positions in a single batch
-  const batchResult = await claimPositionsBatched(
+  // Pre-validate positions on-chain (eth_call, no gas cost, no relayer quota)
+  const { valid: validated, invalid } = await preValidatePositions(
     toClaim.map(p => ({ conditionId: p.conditionId, negRisk: p.negRisk }))
   )
 
-  if (batchResult.success) {
-    console.log(`[CLAIMING] BATCH SUCCESS! TX: ${batchResult.txHash}`)
-    result.claimed = toClaim.length
-    result.totalValue = totalValue
-
-    // Log each claimed position
-    for (const position of toClaim) {
-      result.details.push({
-        conditionId: position.conditionId,
-        title: position.title,
-        outcome: position.outcome,
-        value: position.currentValue,
-        status: 'claimed',
-        txHash: batchResult.txHash
-      })
-
-      await logClaimAttempt({
-        conditionId: position.conditionId,
-        marketSlug: position.marketSlug,
-        outcome: position.outcome,
-        value: position.currentValue,
-        status: 'claimed',
-        txHash: batchResult.txHash
-      })
-    }
-  } else {
-    console.log(`[CLAIMING] BATCH FAILED: ${batchResult.error}`)
-
-    // Check if it's an oracle error - mark as skipped (will retry)
-    const isOracleNotReady = batchResult.error?.includes('result for condition not received yet')
-
-    if (isOracleNotReady) {
-      console.log(`[CLAIMING] Oracle not ready for one or more positions, will retry next run`)
-      result.skipped += toClaim.length
-      for (const position of toClaim) {
+  // Mark invalid positions as skipped
+  if (invalid.length > 0) {
+    console.log(`[CLAIMING] ${invalid.length} positions failed pre-validation, skipping`)
+    for (const inv of invalid) {
+      const pos = toClaim.find(p => p.conditionId === inv.conditionId)
+      if (pos) {
+        result.skipped++
         result.details.push({
-          conditionId: position.conditionId,
-          title: position.title,
-          outcome: position.outcome,
-          value: position.currentValue,
+          conditionId: pos.conditionId,
+          title: pos.title,
+          outcome: pos.outcome,
+          value: pos.currentValue,
           status: 'skipped',
-          error: 'Oracle not ready'
+          error: inv.error
         })
       }
-    } else {
-      // Real failure - log it
-      result.failed = toClaim.length
-      for (const position of toClaim) {
+    }
+  }
+
+  // Filter toClaim to only validated positions
+  const validToClaim = toClaim.filter(p =>
+    validated.some(v => v.conditionId === p.conditionId)
+  )
+
+  if (validToClaim.length === 0) {
+    console.log('[CLAIMING] No positions passed pre-validation')
+    return result
+  }
+
+  const totalValue = validToClaim.reduce((sum, p) => sum + p.currentValue, 0)
+  console.log(`[CLAIMING] Claiming ${validToClaim.length} validated positions ($${totalValue.toFixed(2)} total) in chunks of ${MAX_BATCH_SIZE}`)
+
+  // Process in chunks of MAX_BATCH_SIZE
+  for (let i = 0; i < validToClaim.length; i += MAX_BATCH_SIZE) {
+    const chunk = validToClaim.slice(i, i + MAX_BATCH_SIZE)
+    const chunkNum = Math.floor(i / MAX_BATCH_SIZE) + 1
+    const totalChunks = Math.ceil(validToClaim.length / MAX_BATCH_SIZE)
+    console.log(`[CLAIMING] Processing chunk ${chunkNum}/${totalChunks} (${chunk.length} positions)`)
+
+    const batchResult = await claimPositionsBatched(
+      chunk.map(p => ({ conditionId: p.conditionId, negRisk: p.negRisk }))
+    )
+
+    if (batchResult.success) {
+      console.log(`[CLAIMING] Chunk ${chunkNum} SUCCESS! TX: ${batchResult.txHash}`)
+      result.claimed += chunk.length
+      result.totalValue += chunk.reduce((sum, p) => sum + p.currentValue, 0)
+
+      for (const position of chunk) {
         result.details.push({
           conditionId: position.conditionId,
           title: position.title,
           outcome: position.outcome,
           value: position.currentValue,
-          status: 'failed',
-          error: batchResult.error
+          status: 'claimed',
+          txHash: batchResult.txHash
         })
 
         await logClaimAttempt({
@@ -211,9 +211,79 @@ export async function syncClaiming(): Promise<ClaimingSyncResult> {
           marketSlug: position.marketSlug,
           outcome: position.outcome,
           value: position.currentValue,
-          status: 'failed',
-          error: batchResult.error
+          status: 'claimed',
+          txHash: batchResult.txHash
         })
+      }
+    } else {
+      console.log(`[CLAIMING] Chunk ${chunkNum} FAILED: ${batchResult.error}`)
+
+      // If rate limited, stop processing further chunks
+      if (batchResult.rateLimited) {
+        console.log(`[CLAIMING] Rate limited, stopping further chunks`)
+        // Mark remaining positions (this chunk + future chunks) as failed
+        const remaining = validToClaim.slice(i)
+        result.failed += remaining.length
+        for (const position of remaining) {
+          result.details.push({
+            conditionId: position.conditionId,
+            title: position.title,
+            outcome: position.outcome,
+            value: position.currentValue,
+            status: 'failed',
+            error: batchResult.error
+          })
+
+          await logClaimAttempt({
+            conditionId: position.conditionId,
+            marketSlug: position.marketSlug,
+            outcome: position.outcome,
+            value: position.currentValue,
+            status: 'failed',
+            error: batchResult.error
+          })
+        }
+        break
+      }
+
+      // Check if it's an oracle error - mark as skipped (will retry)
+      const isOracleNotReady = batchResult.error?.includes('result for condition not received yet')
+
+      if (isOracleNotReady) {
+        console.log(`[CLAIMING] Oracle not ready for chunk ${chunkNum}, will retry next run`)
+        result.skipped += chunk.length
+        for (const position of chunk) {
+          result.details.push({
+            conditionId: position.conditionId,
+            title: position.title,
+            outcome: position.outcome,
+            value: position.currentValue,
+            status: 'skipped',
+            error: 'Oracle not ready'
+          })
+        }
+      } else {
+        // Real failure - log it
+        result.failed += chunk.length
+        for (const position of chunk) {
+          result.details.push({
+            conditionId: position.conditionId,
+            title: position.title,
+            outcome: position.outcome,
+            value: position.currentValue,
+            status: 'failed',
+            error: batchResult.error
+          })
+
+          await logClaimAttempt({
+            conditionId: position.conditionId,
+            marketSlug: position.marketSlug,
+            outcome: position.outcome,
+            value: position.currentValue,
+            status: 'failed',
+            error: batchResult.error
+          })
+        }
       }
     }
   }
