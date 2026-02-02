@@ -18,6 +18,11 @@ export function startCronJobs() {
     return
   }
 
+  if (process.env.PAUSE_WORKERS === 'true') {
+    console.log('Workers paused (PAUSE_WORKERS=true)')
+    return
+  }
+
   console.log('Starting cron jobs...')
 
   // Initial sync
